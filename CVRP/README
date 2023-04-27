@@ -1,0 +1,10 @@
+The Local Search Heuristic (LSH) algorithm has been implemented in both sequential and parallel form. The source code of sequential version of LSH is available in "sequential_cvrp.c" file. Two GPU-based parallel strategies have been designed for the improvement phase of LSH, namely, routel level parallel design and customer level parallel design. Source codes for these two version are coded in files, namely, "customer_level.cu" and "route_level.cu" files, respectively. These source files are available in "sourceCodes" folder. Benchmarking data suites are stored in  "input" folder.
+
+Code execution steps:
+1. Sequential version
+	1.1 gcc sequential_cvrp.c -o cvrp -lm -std=c99
+	1.2 ./cvrp ../input/X/X-n1001-k43.vrp
+2. parallel version
+	1.1 nvcc customer_level.cu -o pcvrp -arch=sm_60 // P100 has conmpute compability 6.0, so "arch" flag is set to sm_60.
+	1.2 ./pcvrp ../input/X/X-n1001-k43.vrp
+
