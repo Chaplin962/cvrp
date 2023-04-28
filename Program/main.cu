@@ -23,11 +23,12 @@ int main(int argc, char *argv[])
 
 		Params params(cvrp.x_coords, cvrp.y_coords, cvrp.dist_mtx, cvrp.service_time, cvrp.demands,
 					  cvrp.vehicleCapacity, cvrp.durationLimit, commandline.nbVeh, cvrp.isDurationConstraint, commandline.verbose, commandline.ap);
-		
+
 		cudaDeviceProp props;
 		cudaGetDeviceProperties(&props, 0);
 
-		if (params.nbClients < props.maxThreadsDim[0] * props.maxThreadsPerBlock*1000)//blocks*threads*1000
+		//[edit]checking for gpu capabailities
+		if (params.nbClients < props.maxThreadsDim[0] * props.maxThreadsPerBlock * 1000) // blocks*threads*1000
 		// Running HGS
 		{
 			Genetic solver(params);

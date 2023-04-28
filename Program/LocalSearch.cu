@@ -25,6 +25,7 @@ __global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, do
 		if (loopID > 1) // Allows at least two loops since some moves involving empty routes are not checked at the first loop
 			searchCompleted = true;
 
+		//[edit]parallelizing from here
 		int tid = threadIdx.x + blockIdx.x * blockDim.x;
 		int divisions = (params.nbClients / (NUM_THREADS * BLOCKS));
 		if (divisions == 0)
@@ -34,10 +35,10 @@ __global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, do
 
 		if (tid > 0 && tid < BLOCKS * NUM_THREADS)
 		{
-			/* CLASSICAL ROUTE IMPROVEMENT (RI) MOVES SUBJECT TO A PROXIMITY RESTRICTION */
+			/*[edit] CLASSICAL ROUTE IMPROVEMENT (RI) MOVES SUBJECT TO A PROXIMITY RESTRICTION */
 			for (int posU = 0; posU < divisions; posU++)
 			{
-				nodeU = &clients[orderNodes[tid + posU]];
+				nodeU = &clients[orderNodes[tid * divisions + posU]]; //[edit]
 				int lastTestRINodeU = nodeU->whenLastTestedRI;
 				nodeU->whenLastTestedRI = nbMoves;
 				for (int posV = 0; posV < (int)params.correlatedVertices[nodeU->cour].size(); posV++)
