@@ -1,4 +1,6 @@
 #include "Genetic.h"
+#define NUM_THREADS 256								
+#define BLOCKS 1024
 
 void Genetic::run()
 {	

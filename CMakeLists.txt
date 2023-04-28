@@ -4,9 +4,9 @@ set(CMAKE_CXX_STANDARD 17)
 
 set(
         src_files
-        Program/Genetic.cpp
+        Program/Genetic.cu
         Program/Individual.cpp
-        Program/LocalSearch.cpp
+        Program/LocalSearch.cu
         Program/Params.cpp
         Program/Population.cpp
         Program/Split.cpp
@@ -22,7 +22,7 @@ include_directories(Program)
 
 # Build Executable
 add_executable(bin
-        Program/main.cpp
+        Program/main.cu
         ${src_files})
 
 set_target_properties(bin PROPERTIES OUTPUT_NAME hgs)
