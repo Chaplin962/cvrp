@@ -1,5 +1,5 @@
 #include "Genetic.h"
-#define NUM_THREADS 256
+#define NUM_THREADS 1024
 #define BLOCKS 1024
 
 void Genetic::run()
@@ -25,7 +25,8 @@ void Genetic::run()
 		cudaMemcpy(parallel_offspring, offspring, sizeof(Individual), cudaMemcpyHostToDevice);
 		cudaMemcpy(parallel_params, params, sizeof(Params), cudaMemcpyHostToDevice);
 
-		localSearch.run<<<BLOCKS, NUM_THREADS>>>(parallel_offspring, parallel_params.penaltyCapacity, parallel_params.penaltyDuration);
+		int numThread = params.nbClients / BLOCKS;
+		localSearch.run<<<BLOCKS, numThread>>>(parallel_offspring, parallel_params.penaltyCapacity, parallel_params.penaltyDuration);
 
 		cudaMemcpy(offspring, parallel_offspring, sizeof(Individual), cudaMemcpyDeviceToHost);
 		cudaMemcpy(params, parallel_params, sizeof(Params), cudaMemcpyDeviceToHost);

@@ -1,6 +1,9 @@
-cmake_minimum_required(VERSION 3.15)
-project(HGS_CVRP)
+cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
+project(HGS_CVRP LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
+
+#[edit] for cuda
+cmake_minimum_required(VERSION 3.9 FATAL_ERROR)
 
 set(
         src_files
