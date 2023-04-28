@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
 		cudaGetDeviceProperties(&props, 0);
 
 		//[edit]checking for gpu capabailities
-		if (params.nbClients < props.maxThreadsDim[0] * props.maxThreadsPerBlock * 1000) // blocks*threads*1000
+		if (params.nbClients < props.maxThreadsDim[0] * props.maxThreadsDim[1] * props.maxThreadsDim[2] * props.maxThreadsPerBlock * 1000) // blocks*threads*1000
 		// Running HGS
 		{
 			Genetic solver(params);

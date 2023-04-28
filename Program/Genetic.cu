@@ -17,8 +17,19 @@ void Genetic::run()
 		crossoverOX(offspring, population.getBinaryTournament(), population.getBinaryTournament());
 
 		/*[edit] LOCAL SEARCH */
+		Individual *parallel_offspring;
+		Params *parallel_params;
+		cudaMalloc((void **)&parallel_offspring, sizeof(Individual));
+		cudaMalloc((void **)&parallel_params, sizeof(Params));
 
-		localSearch.run<<<BLOCKS, NUM_THREADS>>>(offspring, params.penaltyCapacity, params.penaltyDuration);
+		cudaMemcpy(parallel_offspring, offspring, sizeof(Individual), cudaMemcpyHostToDevice);
+		cudaMemcpy(parallel_params, params, sizeof(Params), cudaMemcpyHostToDevice);
+
+		localSearch.run<<<BLOCKS, NUM_THREADS>>>(parallel_offspring, parallel_params.penaltyCapacity, parallel_params.penaltyDuration);
+
+		cudaMemcpy(offspring, parallel_offspring, sizeof(Individual), cudaMemcpyDeviceToHost);
+		cudaMemcpy(params, parallel_params, sizeof(Params), cudaMemcpyDeviceToHost);
+		// localSearch.run(offspring, params.penaltyCapacity, params.penaltyDuration);
 
 		bool isNewBest = population.addIndividual(offspring, true);
 		if (!offspring.eval.isFeasible && params.ran() % 2 == 0) // Repair half of the solutions in case of infeasibility
