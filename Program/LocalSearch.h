@@ -110,7 +110,7 @@ struct SwapStarElement
 class LocalSearch
 {
 
-private:
+public:
 	
 	Params & params ;							// Problem parameters
 	bool searchCompleted;						// Tells whether all moves have been evaluated without success

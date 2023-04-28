@@ -1105,8 +1105,10 @@ void Genetic::run()
 		/*[edit] LOCAL SEARCH */
 		Individual *parallel_offspring;
 		Params *parallel_params;
+		Localsearch *localsearch;
 		cudaMalloc((void **)&parallel_offspring, sizeof(Individual));
 		cudaMalloc((void **)&parallel_params, sizeof(Params));
+
 
 		cudaMemcpy(parallel_offspring, &offspring, sizeof(Individual), cudaMemcpyHostToDevice);
 		cudaMemcpy(parallel_params, &params, sizeof(Params), cudaMemcpyHostToDevice);
@@ -1193,7 +1195,7 @@ Genetic::Genetic(Params &params) : params(params),
 								   population(params, this->split, this->localSearch),
 								   offspring(params) {}
 
-__global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
+void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
 {
 	this->penaltyCapacityLS = penaltyCapacityLS;
 	this->penaltyDurationLS = penaltyDurationLS;
@@ -1313,6 +1315,130 @@ __global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, do
 
 	// Register the solution produced by the LS in the individual
 	exportIndividual(indiv);
+}
+
+
+__global__ void run2(LocalSearch localsearch, Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
+{
+	localsearch.penaltyCapacityLS = penaltyCapacityLS;
+	localsearch.penaltyDurationLS = penaltyDurationLS;
+	localsearch.loadIndividual(indiv);
+
+	// Shuffling the order of the nodes explored by the LS to allow for more diversity in the search
+	std::shuffle(localsearch.orderNodes.begin(), localsearch.orderNodes.end(), localsearch.params.ran);
+	std::shuffle(localsearch.orderRoutes.begin(), localsearch.orderRoutes.end(), localsearch.params.ran);
+
+	for (int i = 1; i <= localsearch.params.nbClients; i++)
+		if (localsearch.params.ran() % localsearch.params.ap.nbGranular == 0) // O(n/nbGranular) calls to the inner function on average, to achieve linear-time complexity overall
+			std::shuffle(localsearch.params.correlatedVertices[i].begin(), localsearch.params.correlatedVertices[i].end(), localsearch.params.ran);
+
+	localsearch.searchCompleted = false;
+	for (localsearch.loopID = 0; !localsearch.searchCompleted; localsearch.loopID++)
+	{
+		if (localsearch.loopID > 1) // Allows at least two loops since some moves involving empty routes are not checked at the first loop
+			localsearch.searchCompleted = true;
+
+		//[edit]parallelizing from here
+		int tid = threadIdx.x + blockIdx.x * blockDim.x;
+		int divisions = (localsearch.params.nbClients / (NUM_THREADS * BLOCKS));
+		if (divisions == 0)
+		{
+			divisions++;
+		}
+
+		if (tid > 0 && tid < BLOCKS * NUM_THREADS)
+		{
+			/*[edit] CLASSICAL ROUTE IMPROVEMENT (RI) MOVES SUBJECT TO A PROXIMITY RESTRICTION */
+			for (int posU = 0; posU < divisions; posU++)
+			{
+				localsearch.nodeU = &localsearch.clients[localsearch.orderNodes[tid * divisions + posU]]; //[edit]
+				int lastTestRINodeU = localsearch.nodeU->whenLastTestedRI;
+				localsearch.nodeU->whenLastTestedRI = localsearch.nbMoves;
+				for (int posV = 0; posV < (int)localsearch.params.correlatedVertices[localsearch.nodeU->cour].size(); posV++)
+				{
+					localsearch.nodeV = &localsearch.clients[localsearch.params.correlatedVertices[localsearch.nodeU->cour][posV]];
+					if (localsearch.loopID == 0 || std::max<int>(localsearch.nodeU->route->whenLastModified, localsearch.nodeV->route->whenLastModified) > lastTestRINodeU) // only evaluate moves involving routes that have been modified since last move evaluations for nodeU
+					{
+						// Randomizing the order of the neighborhoods within this loop does not matter much as we are already randomizing the order of the node pairs (and it's not very common to find improving moves of different types for the same node pair)
+						localsearch.setLocalVariablesRouteU();
+						localsearch.setLocalVariablesRouteV();
+						if (localsearch.move1())
+							continue; // RELOCATE
+						if (localsearch.move2())
+							continue; // RELOCATE
+						if (localsearch.move3())
+							continue; // RELOCATE
+						if (localsearch.nodeUIndex <= localsearch.nodeVIndex && localsearch.move4())
+							continue; // SWAP
+						if (localsearch.move5())
+							continue; // SWAP
+						if (localsearch.nodeUIndex <= localsearch.nodeVIndex && localsearch.move6())
+							continue; // SWAP
+						if (localsearch.intraRouteMove && localsearch.move7())
+							continue; // 2-OPT
+						if (!localsearch.intraRouteMove && localsearch.move8())
+							continue; // 2-OPT*
+						if (!localsearch.intraRouteMove && localsearch.move9())
+							continue; // 2-OPT*
+
+						// Trying moves that insert nodeU directly after the depot
+						if (localsearch.nodeV->prev->isDepot)
+						{
+							localsearch.nodeV = localsearch.nodeV->prev;
+							localsearch.setLocalVariablesRouteV();
+							if (localsearch.move1())
+								continue; // RELOCATE
+							if (localsearch.move2())
+								continue; // RELOCATE
+							if (localsearch.move3())
+								continue; // RELOCATE
+							if (!localsearch.intraRouteMove && localsearch.move8())
+								continue; // 2-OPT*
+							if (!localsearch.intraRouteMove && localsearch.move9())
+								continue; // 2-OPT*
+						}
+					}
+				}
+
+				/* MOVES INVOLVING AN EMPTY ROUTE -- NOT TESTED IN THE FIRST LOOP TO AVOID INCREASING TOO MUCH THE FLEET SIZE */
+				if (localsearch.loopID > 0 && !localsearch.emptyRoutes.empty())
+				{
+					localsearch.nodeV = localsearch.routes[*localsearch.emptyRoutes.begin()].depot;
+					localsearch.setLocalVariablesRouteU();
+					localsearch.setLocalVariablesRouteV();
+					if (localsearch.move1())
+						continue; // RELOCATE
+					if (localsearch.move2())
+						continue; // RELOCATE
+					if (localsearch.move3())
+						continue; // RELOCATE
+					if (localsearch.move9())
+						continue; // 2-OPT*
+				}
+			}
+		}
+	
+		if (localsearch.params.ap.useSwapStar == 1 && localsearch.params.areCoordinatesProvided)
+		{
+			/* (SWAP*) MOVES LIMITED TO ROUTE PAIRS WHOSE CIRCLE SECTORS OVERLAP */
+			for (int rU = 0; rU < localsearch.params.nbVehicles; rU++)
+			{
+				localsearch.routeU = &localsearch.routes[localsearch.orderRoutes[rU]];
+				int lastTestSWAPStarRouteU = localsearch.routeU->whenLastTestedSWAPStar;
+				localsearch.routeU->whenLastTestedSWAPStar = localsearch.nbMoves;
+				for (int rV = 0; rV < localsearch.params.nbVehicles; rV++)
+				{
+					localsearch.routeV = &localsearch.routes[localsearch.orderRoutes[rV]];
+					if (localsearch.routeU->nbCustomers > 0 && localsearch.routeV->nbCustomers > 0 && localsearch.routeU->cour < localsearch.routeV->cour && (localsearch.loopID == 0 || std::max<int>(localsearch.routeU->whenLastModified, localsearch.routeV->whenLastModified) > lastTestSWAPStarRouteU))
+						if (CircleSector::overlap(localsearch.routeU->sector, localsearch.routeV->sector))
+							localsearch.swapStar();
+				}
+			}
+		}
+	}
+
+	// Register the solution produced by the LS in the individual
+	localsearch.exportIndividual(indiv);
 }
 
 void LocalSearch::setLocalVariablesRouteU()

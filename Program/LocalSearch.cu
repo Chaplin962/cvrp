@@ -5,7 +5,7 @@
 #define NUM_THREADS 1024
 #define BLOCKS 1024
 
-__global__ void LocalSearch::run(Individual *indiv, double penaltyCapacityLS, double penaltyDurationLS)
+__global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
 {
 	this->penaltyCapacityLS = penaltyCapacityLS;
 	this->penaltyDurationLS = penaltyDurationLS;
