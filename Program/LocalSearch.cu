@@ -26,7 +26,11 @@ __global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, do
 			searchCompleted = true;
 
 		int tid = threadIdx.x + blockIdx.x * blockDim.x;
-		int divisions = ((((params.nbClients) / threadIdx.x) / blockIdx.x) / blockDim.x);
+		int divisions = (params.nbClients / (NUM_THREADS * BLOCKS));
+		if (divisions == 0)
+		{
+			divisions++;
+		}
 
 		if (tid > 0 && tid < BLOCKS * NUM_THREADS)
 		{
