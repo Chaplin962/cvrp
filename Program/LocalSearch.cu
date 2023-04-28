@@ -2,7 +2,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
-#define NUM_THREADS 256								
+#define NUM_THREADS 256
 #define BLOCKS 1024
 
 __global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
@@ -14,8 +14,8 @@ __global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, do
 	// Shuffling the order of the nodes explored by the LS to allow for more diversity in the search
 	std::shuffle(orderNodes.begin(), orderNodes.end(), params.ran);
 	std::shuffle(orderRoutes.begin(), orderRoutes.end(), params.ran);
-		
-		for (int i = 1; i <= params.nbClients; i++)
+
+	for (int i = 1; i <= params.nbClients; i++)
 		if (params.ran() % params.ap.nbGranular == 0) // O(n/nbGranular) calls to the inner function on average, to achieve linear-time complexity overall
 			std::shuffle(params.correlatedVertices[i].begin(), params.correlatedVertices[i].end(), params.ran);
 
@@ -25,18 +25,67 @@ __global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, do
 		if (loopID > 1) // Allows at least two loops since some moves involving empty routes are not checked at the first loop
 			searchCompleted = true;
 
-		/* CLASSICAL ROUTE IMPROVEMENT (RI) MOVES SUBJECT TO A PROXIMITY RESTRICTION */
-		for (int posU = 0; posU < params.nbClients; posU++)
+		int tid = threadIdx.x + blockIdx.x * blockDim.x;
+		int divisions = ((((params.nbClients) / threadIdx.x) / blockIdx.x) / blockDim.x);
+
+		if (tid > 0 && tid < BLOCKS * NUM_THREADS)
 		{
-			nodeU = &clients[orderNodes[posU]];
-			int lastTestRINodeU = nodeU->whenLastTestedRI;
-			nodeU->whenLastTestedRI = nbMoves;
-			for (int posV = 0; posV < (int)params.correlatedVertices[nodeU->cour].size(); posV++)
+			/* CLASSICAL ROUTE IMPROVEMENT (RI) MOVES SUBJECT TO A PROXIMITY RESTRICTION */
+			for (int posU = 0; posU < divisions; posU++)
 			{
-				nodeV = &clients[params.correlatedVertices[nodeU->cour][posV]];
-				if (loopID == 0 || std::max<int>(nodeU->route->whenLastModified, nodeV->route->whenLastModified) > lastTestRINodeU) // only evaluate moves involving routes that have been modified since last move evaluations for nodeU
+				nodeU = &clients[orderNodes[tid + posU]];
+				int lastTestRINodeU = nodeU->whenLastTestedRI;
+				nodeU->whenLastTestedRI = nbMoves;
+				for (int posV = 0; posV < (int)params.correlatedVertices[nodeU->cour].size(); posV++)
 				{
-					// Randomizing the order of the neighborhoods within this loop does not matter much as we are already randomizing the order of the node pairs (and it's not very common to find improving moves of different types for the same node pair)
+					nodeV = &clients[params.correlatedVertices[nodeU->cour][posV]];
+					if (loopID == 0 || std::max<int>(nodeU->route->whenLastModified, nodeV->route->whenLastModified) > lastTestRINodeU) // only evaluate moves involving routes that have been modified since last move evaluations for nodeU
+					{
+						// Randomizing the order of the neighborhoods within this loop does not matter much as we are already randomizing the order of the node pairs (and it's not very common to find improving moves of different types for the same node pair)
+						setLocalVariablesRouteU();
+						setLocalVariablesRouteV();
+						if (move1())
+							continue; // RELOCATE
+						if (move2())
+							continue; // RELOCATE
+						if (move3())
+							continue; // RELOCATE
+						if (nodeUIndex <= nodeVIndex && move4())
+							continue; // SWAP
+						if (move5())
+							continue; // SWAP
+						if (nodeUIndex <= nodeVIndex && move6())
+							continue; // SWAP
+						if (intraRouteMove && move7())
+							continue; // 2-OPT
+						if (!intraRouteMove && move8())
+							continue; // 2-OPT*
+						if (!intraRouteMove && move9())
+							continue; // 2-OPT*
+
+						// Trying moves that insert nodeU directly after the depot
+						if (nodeV->prev->isDepot)
+						{
+							nodeV = nodeV->prev;
+							setLocalVariablesRouteV();
+							if (move1())
+								continue; // RELOCATE
+							if (move2())
+								continue; // RELOCATE
+							if (move3())
+								continue; // RELOCATE
+							if (!intraRouteMove && move8())
+								continue; // 2-OPT*
+							if (!intraRouteMove && move9())
+								continue; // 2-OPT*
+						}
+					}
+				}
+
+				/* MOVES INVOLVING AN EMPTY ROUTE -- NOT TESTED IN THE FIRST LOOP TO AVOID INCREASING TOO MUCH THE FLEET SIZE */
+				if (loopID > 0 && !emptyRoutes.empty())
+				{
+					nodeV = routes[*emptyRoutes.begin()].depot;
 					setLocalVariablesRouteU();
 					setLocalVariablesRouteV();
 					if (move1())
@@ -45,55 +94,11 @@ __global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, do
 						continue; // RELOCATE
 					if (move3())
 						continue; // RELOCATE
-					if (nodeUIndex <= nodeVIndex && move4())
-						continue; // SWAP
-					if (move5())
-						continue; // SWAP
-					if (nodeUIndex <= nodeVIndex && move6())
-						continue; // SWAP
-					if (intraRouteMove && move7())
-						continue; // 2-OPT
-					if (!intraRouteMove && move8())
+					if (move9())
 						continue; // 2-OPT*
-					if (!intraRouteMove && move9())
-						continue; // 2-OPT*
-
-					// Trying moves that insert nodeU directly after the depot
-					if (nodeV->prev->isDepot)
-					{
-						nodeV = nodeV->prev;
-						setLocalVariablesRouteV();
-						if (move1())
-							continue; // RELOCATE
-						if (move2())
-							continue; // RELOCATE
-						if (move3())
-							continue; // RELOCATE
-						if (!intraRouteMove && move8())
-							continue; // 2-OPT*
-						if (!intraRouteMove && move9())
-							continue; // 2-OPT*
-					}
 				}
 			}
-
-			/* MOVES INVOLVING AN EMPTY ROUTE -- NOT TESTED IN THE FIRST LOOP TO AVOID INCREASING TOO MUCH THE FLEET SIZE */
-			if (loopID > 0 && !emptyRoutes.empty())
-			{
-				nodeV = routes[*emptyRoutes.begin()].depot;
-				setLocalVariablesRouteU();
-				setLocalVariablesRouteV();
-				if (move1())
-					continue; // RELOCATE
-				if (move2())
-					continue; // RELOCATE
-				if (move3())
-					continue; // RELOCATE
-				if (move9())
-					continue; // 2-OPT*
-			}
 		}
-
 		if (params.ap.useSwapStar == 1 && params.areCoordinatesProvided)
 		{
 			/* (SWAP*) MOVES LIMITED TO ROUTE PAIRS WHOSE CIRCLE SECTORS OVERLAP */

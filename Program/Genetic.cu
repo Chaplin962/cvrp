@@ -1,5 +1,5 @@
 #include "Genetic.h"
-#define NUM_THREADS 256								
+#define NUM_THREADS 256
 #define BLOCKS 1024
 
 void Genetic::run()
@@ -17,7 +17,8 @@ void Genetic::run()
 
 		/* LOCAL SEARCH */
 
-		localSearch.run(offspring, params.penaltyCapacity, params.penaltyDuration);
+		localSearch.run<<<BLOCKS, NUM_THREADS>>>(offspring, params.penaltyCapacity, params.penaltyDuration);
+		
 		bool isNewBest = population.addIndividual(offspring,true);
 		if (!offspring.eval.isFeasible && params.ran()%2 == 0) // Repair half of the solutions in case of infeasibility
 		{
