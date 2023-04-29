@@ -1964,6 +1964,9 @@ void LocalSearch::updateRouteData(Route *myRoute)
 		}
 	*/
 
+	cudaMemcpy(parallel_myRoute, myRoute, sizeof(Route), cudaMemcpyDeviceToHost);
+	cudaMemcpy(parallel_mynode, mynode, sizeof(Route), cudaMemcpyDeviceToHost);
+
 	myRoute->duration = mytime;
 	myRoute->load = myload;
 	myRoute->penalty = penaltyExcessDuration(mytime) + penaltyExcessLoad(myload);
