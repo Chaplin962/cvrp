@@ -1925,9 +1925,12 @@ void LocalSearch::updateRouteData(Route *myRoute)
 
 	bool firstIt = true;
 
+
 	updateRouteData<<BLOCKS,NUM_THREADS>>(myRoute,mynode,myplace,myload,mytime,myReversalDistance,cumulatedX,cumulatedY,firstIt,params_cli,params_timecost);
 
-	while (!mynode->isDepot || firstIt)
+
+
+	/*while (!mynode->isDepot || firstIt)
 	{
 		mynode = mynode->next;
 		myplace++;
@@ -1948,7 +1951,7 @@ void LocalSearch::updateRouteData(Route *myRoute)
 				myRoute->sector.extend(params.cli[mynode->cour].polarAngle);
 		}
 		firstIt = false;
-	}
+	}*/
 
 	myRoute->duration = mytime;
 	myRoute->load = myload;
