@@ -1875,20 +1875,20 @@ __global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynod
         mynode = mynode->next;
         myplace++;
         mynode->position = myplace;
-        myload = myload + params_cli[mynode->cour].demand;
-        mytime += params_timeCost[mynode->prev->cour][mynode->cour] + params_cli[mynode->cour].serviceDuration;
+        myload += double(*params_cli[mynode->cour]->demand;
+        mytime += params_timeCost[mynode->prev->cour][mynode->cour] + params_cli[mynode->cour]->serviceDuration;
         myReversalDistance += params_timeCost[mynode->cour][mynode->prev->cour] - params_timeCost[mynode->prev->cour][mynode->cour];
         mynode->cumulatedLoad = myload;
         mynode->cumulatedTime = mytime;
         mynode->cumulatedReversalDistance = myReversalDistance;
         if (!mynode->isDepot)
         {
-            cumulatedX += params_cli[mynode->cour].coordX;
-            cumulatedY += params_cli[mynode->cour].coordY;
+            cumulatedX += params_cli[mynode->cour]->coordX;
+            cumulatedY += params_cli[mynode->cour]->coordY;
             if (firstIt)
-                myRoute->sector.initialize(params_cli[mynode->cour].polarAngle);
+                myRoute->sector.initialize(params_cli[mynode->cour]->polarAngle);
             else
-                myRoute->sector.extend(params_cli[mynode->cour].polarAngle);
+                myRoute->sector.extend(params_cli[mynode->cour]->polarAngle);
         }
         firstIt = false;
     }
