@@ -1875,7 +1875,7 @@ __global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynod
         mynode = mynode->next;
         myplace++;
         mynode->position = myplace;
-        myload += double(*params_cli[mynode->cour]->demand;
+        myload += params_cli[mynode->cour]->demand;
         mytime += params_timeCost[mynode->prev->cour][mynode->cour] + params_cli[mynode->cour]->serviceDuration;
         myReversalDistance += params_timeCost[mynode->cour][mynode->prev->cour] - params_timeCost[mynode->prev->cour][mynode->cour];
         mynode->cumulatedLoad = myload;
