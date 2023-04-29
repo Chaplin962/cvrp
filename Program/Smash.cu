@@ -1908,6 +1908,7 @@ __global__ void updateRouteData_kernel(Route *myRoute,Node *mynode,int myplace,d
 	}
 }
 
+
 void LocalSearch::updateRouteData(Route *myRoute)
 {
 	int myplace = 0;
