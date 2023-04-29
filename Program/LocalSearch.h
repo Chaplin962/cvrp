@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 /*MIT License
 
 Copyright(c) 2020 Thibaut Vidal
@@ -192,7 +191,6 @@ private:
 };
 
 #endif
-=======
 /*MIT License
 
 Copyright(c) 2020 Thibaut Vidal
@@ -386,4 +384,3 @@ public:
 };
 
 #endif
->>>>>>> 62dfb14936b294b99fa4505e58b7f299baacbf3e
