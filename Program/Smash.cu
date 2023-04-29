@@ -1102,21 +1102,7 @@ void Genetic::run()
 		/* SELECTION AND CROSSOVER */
 		crossoverOX(offspring, population.getBinaryTournament(), population.getBinaryTournament());
 
-		/*[edit] LOCAL SEARCH */
-		Individual *parallel_offspring;
-		Params *parallel_params;
-		cudaMalloc((void **)&parallel_offspring, sizeof(Individual));
-		cudaMalloc((void **)&parallel_params, sizeof(Params));
-
-		cudaMemcpy(parallel_offspring, offspring, sizeof(Individual), cudaMemcpyHostToDevice);
-		cudaMemcpy(parallel_params, params, sizeof(Params), cudaMemcpyHostToDevice);
-
-		int numThread = params.nbClients / BLOCKS;
-		localSearch.run<<<BLOCKS, numThread>>>(parallel_offspring, parallel_params.penaltyCapacity, parallel_params.penaltyDuration);
-
-		cudaMemcpy(offspring, parallel_offspring, sizeof(Individual), cudaMemcpyDeviceToHost);
-		cudaMemcpy(params, parallel_params, sizeof(Params), cudaMemcpyDeviceToHost);
-		// localSearch.run(offspring, params.penaltyCapacity, params.penaltyDuration);
+		localSearch.run(offspring, params.penaltyCapacity, params.penaltyDuration);
 
 		bool isNewBest = population.addIndividual(offspring, true);
 		if (!offspring.eval.isFeasible && params.ran() % 2 == 0) // Repair half of the solutions in case of infeasibility
@@ -1314,7 +1300,6 @@ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penalt
 	// Register the solution produced by the LS in the individual
 	exportIndividual(indiv);
 }
-
 
 void LocalSearch::setLocalVariablesRouteU()
 {
@@ -1870,7 +1855,7 @@ void LocalSearch::swapNode(Node *U, Node *V)
 	U->route = myRouteV;
 	V->route = myRouteU;
 }
-
+/*
 struct Client
 {
 	double coordX;			// Coordinate X
@@ -1878,13 +1863,14 @@ struct Client
 	double serviceDuration; // Service duration
 	double demand;			// Demand
 	int polarAngle;			// Polar angle of the client around the depot, measured in degrees and truncated for convenience
-};
+};*/
 
-__global__ void updateRouteData_kernel(Route *myRoute,Node *mynode,int myplace,double myload,double mytime,double myReversalDistance,double cumulatedX,double cumulatedY,bool firstIt,vecot<Client>params_cli,vector<vector>params_timecost){
-	
+__global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynode, int myplace, double myload, double mytime, double myReversalDistance, double cumulatedX, double cumulatedY, bool firstIt, vector<struct Client> params_cli, vector<vector<double>> params_timeCost)
+{
+
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
-	
-	if(!mynode->isDepot || firstIt && tid<BLOCKS*NUM_THREADS)
+
+	if (!mynode->isDepot || firstIt && tid < BLOCKS * NUM_THREADS)
 	{
 		mynode = mynode->next;
 		myplace++;
@@ -1925,7 +1911,16 @@ void LocalSearch::updateRouteData(Route *myRoute)
 
 	bool firstIt = true;
 
-	updateRouteData<<BLOCKS,NUM_THREADS>>(myRoute,mynode,myplace,myload,mytime,myReversalDistance,cumulatedX,cumulatedY,firstIt,params_cli,params_timecost);
+	Route *parallel_myRoute;
+	Node *parallel_mynode;
+
+	cudaMalloc((void **)&parallel_myRoute, sizeof(Route));
+	cudaMalloc((void **)&parallel_mynode, sizeof(Route));
+
+	cudaMemcpy(parallel_myRoute, myRoute, sizeof(Route), cudaMemcpyHostToDevice);
+	cudaMemcpy(parallel_mynode, mynode, sizeof(Route), cudaMemcpyHostToDevice);
+
+	updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timecost);
 
 	while (!mynode->isDepot || firstIt)
 	{
