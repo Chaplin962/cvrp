@@ -4,27 +4,6 @@
 
 #include "AlgorithmParameters.h"
 #include <iostream>
-#include "C_Interface.h"
-#include <string>
-#include <vector>
-#include "Individual.h"
-#include <fstream>
-#include <cmath>
-#include "Params.h"
-#include "Population.h"
-#include "Split.h"
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <curand_kernel.h>
-#include "Genetic.h"
-#include "commandline.h"
-#include "LocalSearch.h"
-#include "InstanceCVRPLIB.h"
-
-using namespace std;
-
-#define NUM_THREADS 1024
-#define BLOCKS 1024
 
 extern "C" struct AlgorithmParameters default_algorithm_parameters()
 {
@@ -75,6 +54,15 @@ void print_algorithm_parameters(const AlgorithmParameters &ap)
 //
 // Created by chkwon on 3/23/22.
 //
+
+#include "C_Interface.h"
+#include "Population.h"
+#include "Params.h"
+#include "Genetic.h"
+#include <string>
+#include <iostream>
+#include <vector>
+#include <cmath>
 
 Solution *prepare_solution(Population &population, Params &params)
 {
@@ -217,6 +205,104 @@ extern "C" void delete_solution(Solution *sol)
 	delete sol;
 }
 
+#include "Genetic.h"
+#define NUM_THREADS 1024
+#define BLOCKS 1024
+
+void Genetic::run()
+{
+	/* INITIAL POPULATION */
+	population.generatePopulation();
+
+	int nbIter;
+	int nbIterNonProd = 1;
+	if (params.verbose)
+		std::cout << "----- STARTING GENETIC ALGORITHM" << std::endl;
+	for (nbIter = 0; nbIterNonProd <= params.ap.nbIter && (params.ap.timeLimit == 0 || (double)(clock() - params.startTime) < params.ap.timeLimit); nbIter++)
+	{
+		/* SELECTION AND CROSSOVER */
+		crossoverOX(offspring, population.getBinaryTournament(), population.getBinaryTournament());
+
+		/*[edit] LOCAL SEARCH */
+		localSearch.run(offspring, params.penaltyCapacity, params.penaltyDuration);
+
+		bool isNewBest = population.addIndividual(offspring, true);
+		if (!offspring.eval.isFeasible && params.ran() % 2 == 0) // Repair half of the solutions in case of infeasibility
+		{
+			localSearch.run(offspring, params.penaltyCapacity * 10., params.penaltyDuration * 10.);
+			if (offspring.eval.isFeasible)
+				isNewBest = (population.addIndividual(offspring, false) || isNewBest);
+		}
+
+		/* TRACKING THE NUMBER OF ITERATIONS SINCE LAST SOLUTION IMPROVEMENT */
+		if (isNewBest)
+			nbIterNonProd = 1;
+		else
+			nbIterNonProd++;
+
+		/* DIVERSIFICATION, PENALTY MANAGEMENT AND TRACES */
+		if (nbIter % params.ap.nbIterPenaltyManagement == 0)
+			population.managePenalties();
+		if (nbIter % params.ap.nbIterTraces == 0)
+			population.printState(nbIter, nbIterNonProd);
+
+		/* FOR TESTS INVOLVING SUCCESSIVE RUNS UNTIL A TIME LIMIT: WE RESET THE ALGORITHM/POPULATION EACH TIME maxIterNonProd IS ATTAINED*/
+		if (params.ap.timeLimit != 0 && nbIterNonProd == params.ap.nbIter)
+		{
+			population.restart();
+			nbIterNonProd = 1;
+		}
+	}
+	if (params.verbose)
+		std::cout << "----- GENETIC ALGORITHM FINISHED AFTER " << nbIter << " ITERATIONS. TIME SPENT: " << (double)(clock() - params.startTime) / (double)CLOCKS_PER_SEC << std::endl;
+}
+
+void Genetic::crossoverOX(Individual &result, const Individual &parent1, const Individual &parent2)
+{
+	// Frequency table to track the customers which have been already inserted
+	std::vector<bool> freqClient = std::vector<bool>(params.nbClients + 1, false);
+
+	// Picking the beginning and end of the crossover zone
+	std::uniform_int_distribution<> distr(0, params.nbClients - 1);
+	int start = distr(params.ran);
+	int end = distr(params.ran);
+
+	// Avoid that start and end coincide by accident
+	while (end == start)
+		end = distr(params.ran);
+
+	// Copy from start to end
+	int j = start;
+	while (j % params.nbClients != (end + 1) % params.nbClients)
+	{
+		result.chromT[j % params.nbClients] = parent1.chromT[j % params.nbClients];
+		freqClient[result.chromT[j % params.nbClients]] = true;
+		j++;
+	}
+
+	// Fill the remaining elements in the order given by the second parent
+	for (int i = 1; i <= params.nbClients; i++)
+	{
+		int temp = parent2.chromT[(end + i) % params.nbClients];
+		if (freqClient[temp] == false)
+		{
+			result.chromT[j % params.nbClients] = temp;
+			j++;
+		}
+	}
+
+	// Complete the individual with the Split algorithm
+	split.generalSplit(result, parent1.eval.nbRoutes);
+}
+
+Genetic::Genetic(Params &params) : params(params),
+								   split(params),
+								   localSearch(params),
+								   population(params, this->split, this->localSearch),
+								   offspring(params) {}
+
+#include "Individual.h"
+
 void Individual::evaluateCompleteCost(const Params &params)
 {
 	eval = EvalIndiv();
@@ -309,6 +395,10 @@ Individual::Individual(Params &params, std::string fileName) : Individual(params
 //
 // Created by chkwon on 3/22/22.
 //
+
+#include <fstream>
+#include <cmath>
+#include "InstanceCVRPLIB.h"
 
 InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInteger = true)
 {
@@ -405,779 +495,12 @@ InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInte
 		throw std::string("Impossible to open instance file: " + pathToInstance);
 }
 
-// The universal constructor for both executable and shared library
-// When the executable is run from the commandline,
-// it will first generate an CVRPLIB instance from .vrp file, then supply necessary information.
-Params::Params(
-	const std::vector<double> &x_coords,
-	const std::vector<double> &y_coords,
-	const std::vector<std::vector<double>> &dist_mtx,
-	const std::vector<double> &service_time,
-	const std::vector<double> &demands,
-	double vehicleCapacity,
-	double durationLimit,
-	int nbVeh,
-	bool isDurationConstraint,
-	bool verbose,
-	const AlgorithmParameters &ap)
-	: ap(ap), isDurationConstraint(isDurationConstraint), nbVehicles(nbVeh), durationLimit(durationLimit),
-	  vehicleCapacity(vehicleCapacity), timeCost(dist_mtx), verbose(verbose)
-{
-	// This marks the starting time of the algorithm
-	startTime = clock();
-
-	nbClients = (int)demands.size() - 1; // Need to substract the depot from the number of nodes
-	totalDemand = 0.;
-	maxDemand = 0.;
-
-	// Initialize RNG
-	ran.seed(ap.seed);
-
-	// check if valid coordinates are provided
-	areCoordinatesProvided = (demands.size() == x_coords.size()) && (demands.size() == y_coords.size());
-
-	cli = std::vector<Client>(nbClients + 1);
-	for (int i = 0; i <= nbClients; i++)
-	{
-		// If useSwapStar==false, x_coords and y_coords may be empty.
-		if (ap.useSwapStar == 1 && areCoordinatesProvided)
-		{
-			cli[i].coordX = x_coords[i];
-			cli[i].coordY = y_coords[i];
-			cli[i].polarAngle = CircleSector::positive_mod(
-				32768. * atan2(cli[i].coordY - cli[0].coordY, cli[i].coordX - cli[0].coordX) / PI);
-		}
-		else
-		{
-			cli[i].coordX = 0.0;
-			cli[i].coordY = 0.0;
-			cli[i].polarAngle = 0.0;
-		}
-
-		cli[i].serviceDuration = service_time[i];
-		cli[i].demand = demands[i];
-		if (cli[i].demand > maxDemand)
-			maxDemand = cli[i].demand;
-		totalDemand += cli[i].demand;
-	}
-
-	if (verbose && ap.useSwapStar == 1 && !areCoordinatesProvided)
-		std::cout << "----- NO COORDINATES HAVE BEEN PROVIDED, SWAP* NEIGHBORHOOD WILL BE DEACTIVATED BY DEFAULT" << std::endl;
-
-	// Default initialization if the number of vehicles has not been provided by the user
-	if (nbVehicles == INT_MAX)
-	{
-		nbVehicles = (int)std::ceil(1.3 * totalDemand / vehicleCapacity) + 3; // Safety margin: 30% + 3 more vehicles than the trivial bin packing LB
-		if (verbose)
-			std::cout << "----- FLEET SIZE WAS NOT SPECIFIED: DEFAULT INITIALIZATION TO " << nbVehicles << " VEHICLES" << std::endl;
-	}
-	else
-	{
-		if (verbose)
-			std::cout << "----- FLEET SIZE SPECIFIED: SET TO " << nbVehicles << " VEHICLES" << std::endl;
-	}
-
-	// Calculation of the maximum distance
-	maxDist = 0.;
-	for (int i = 0; i <= nbClients; i++)
-		for (int j = 0; j <= nbClients; j++)
-			if (timeCost[i][j] > maxDist)
-				maxDist = timeCost[i][j];
-
-	// Calculation of the correlated vertices for each customer (for the granular restriction)
-	correlatedVertices = std::vector<std::vector<int>>(nbClients + 1);
-	std::vector<std::set<int>> setCorrelatedVertices = std::vector<std::set<int>>(nbClients + 1);
-	std::vector<std::pair<double, int>> orderProximity;
-	for (int i = 1; i <= nbClients; i++)
-	{
-		orderProximity.clear();
-		for (int j = 1; j <= nbClients; j++)
-			if (i != j)
-				orderProximity.emplace_back(timeCost[i][j], j);
-		std::sort(orderProximity.begin(), orderProximity.end());
-
-		for (int j = 0; j < std::min<int>(ap.nbGranular, nbClients - 1); j++)
-		{
-			// If i is correlated with j, then j should be correlated with i
-			setCorrelatedVertices[i].insert(orderProximity[j].second);
-			setCorrelatedVertices[orderProximity[j].second].insert(i);
-		}
-	}
-
-	// Filling the vector of correlated vertices
-	for (int i = 1; i <= nbClients; i++)
-		for (int x : setCorrelatedVertices[i])
-			correlatedVertices[i].push_back(x);
-
-	// Safeguards to avoid possible numerical instability in case of instances containing arbitrarily small or large numerical values
-	if (maxDist < 0.1 || maxDist > 100000)
-		throw std::string(
-			"The distances are of very small or large scale. This could impact numerical stability. Please rescale the dataset and run again.");
-	if (maxDemand < 0.1 || maxDemand > 100000)
-		throw std::string(
-			"The demand quantities are of very small or large scale. This could impact numerical stability. Please rescale the dataset and run again.");
-	if (nbVehicles < std::ceil(totalDemand / vehicleCapacity))
-		throw std::string("Fleet size is insufficient to service the considered clients.");
-
-	// A reasonable scale for the initial values of the penalties
-	penaltyDuration = 1;
-	penaltyCapacity = std::max<double>(0.1, std::min<double>(1000., maxDist / maxDemand));
-
-	if (verbose)
-		std::cout << "----- INSTANCE SUCCESSFULLY LOADED WITH " << nbClients << " CLIENTS AND " << nbVehicles << " VEHICLES" << std::endl;
-}
-
-void Population::generatePopulation()
-{
-	if (params.verbose)
-		std::cout << "----- BUILDING INITIAL POPULATION" << std::endl;
-	for (int i = 0; i < 4 * params.ap.mu && (i == 0 || params.ap.timeLimit == 0 || (double)(clock() - params.startTime) < params.ap.timeLimit); i++)
-	{
-		Individual randomIndiv(params);
-		split.generalSplit(randomIndiv, params.nbVehicles);
-		localSearch.run(randomIndiv, params.penaltyCapacity, params.penaltyDuration);
-		addIndividual(randomIndiv, true);
-		if (!randomIndiv.eval.isFeasible && params.ran() % 2 == 0) // Repair half of the solutions in case of infeasibility
-		{
-			localSearch.run(randomIndiv, params.penaltyCapacity * 10., params.penaltyDuration * 10.);
-			if (randomIndiv.eval.isFeasible)
-				addIndividual(randomIndiv, false);
-		}
-	}
-}
-
-bool Population::addIndividual(const Individual &indiv, bool updateFeasible)
-{
-	if (updateFeasible)
-	{
-		listFeasibilityLoad.push_back(indiv.eval.capacityExcess < MY_EPSILON);
-		listFeasibilityDuration.push_back(indiv.eval.durationExcess < MY_EPSILON);
-		listFeasibilityLoad.pop_front();
-		listFeasibilityDuration.pop_front();
-	}
-
-	// Find the adequate subpopulation in relation to the individual feasibility
-	SubPopulation &subpop = (indiv.eval.isFeasible) ? feasibleSubpop : infeasibleSubpop;
-
-	// Create a copy of the individual and updade the proximity structures calculating inter-individual distances
-	Individual *myIndividual = new Individual(indiv);
-	for (Individual *myIndividual2 : subpop)
-	{
-		double myDistance = brokenPairsDistance(*myIndividual, *myIndividual2);
-		myIndividual2->indivsPerProximity.insert({myDistance, myIndividual});
-		myIndividual->indivsPerProximity.insert({myDistance, myIndividual2});
-	}
-
-	// Identify the correct location in the subpopulation and insert the individual
-	int place = (int)subpop.size();
-	while (place > 0 && subpop[place - 1]->eval.penalizedCost > indiv.eval.penalizedCost - MY_EPSILON)
-		place--;
-	subpop.emplace(subpop.begin() + place, myIndividual);
-
-	// Trigger a survivor selection if the maximimum subpopulation size is exceeded
-	if ((int)subpop.size() > params.ap.mu + params.ap.lambda)
-		while ((int)subpop.size() > params.ap.mu)
-			removeWorstBiasedFitness(subpop);
-
-	// Track best solution
-	if (indiv.eval.isFeasible && indiv.eval.penalizedCost < bestSolutionRestart.eval.penalizedCost - MY_EPSILON)
-	{
-		bestSolutionRestart = indiv; // Copy
-		if (indiv.eval.penalizedCost < bestSolutionOverall.eval.penalizedCost - MY_EPSILON)
-		{
-			bestSolutionOverall = indiv;
-			searchProgress.push_back({clock() - params.startTime, bestSolutionOverall.eval.penalizedCost});
-		}
-		return true;
-	}
-	else
-		return false;
-}
-
-void Population::updateBiasedFitnesses(SubPopulation &pop)
-{
-	// Ranking the individuals based on their diversity contribution (decreasing order of distance)
-	std::vector<std::pair<double, int>> ranking;
-	for (int i = 0; i < (int)pop.size(); i++)
-		ranking.push_back({-averageBrokenPairsDistanceClosest(*pop[i], params.ap.nbClose), i});
-	std::sort(ranking.begin(), ranking.end());
-
-	// Updating the biased fitness values
-	if (pop.size() == 1)
-		pop[0]->biasedFitness = 0;
-	else
-	{
-		for (int i = 0; i < (int)pop.size(); i++)
-		{
-			double divRank = (double)i / (double)(pop.size() - 1); // Ranking from 0 to 1
-			double fitRank = (double)ranking[i].second / (double)(pop.size() - 1);
-			if ((int)pop.size() <= params.ap.nbElite) // Elite individuals cannot be smaller than population size
-				pop[ranking[i].second]->biasedFitness = fitRank;
-			else
-				pop[ranking[i].second]->biasedFitness = fitRank + (1.0 - (double)params.ap.nbElite / (double)pop.size()) * divRank;
-		}
-	}
-}
-
-void Population::removeWorstBiasedFitness(SubPopulation &pop)
-{
-	updateBiasedFitnesses(pop);
-	if (pop.size() <= 1)
-		throw std::string("Eliminating the best individual: this should not occur in HGS");
-
-	Individual *worstIndividual = NULL;
-	int worstIndividualPosition = -1;
-	bool isWorstIndividualClone = false;
-	double worstIndividualBiasedFitness = -1.e30;
-	for (int i = 1; i < (int)pop.size(); i++)
-	{
-		bool isClone = (averageBrokenPairsDistanceClosest(*pop[i], 1) < MY_EPSILON); // A distance equal to 0 indicates that a clone exists
-		if ((isClone && !isWorstIndividualClone) || (isClone == isWorstIndividualClone && pop[i]->biasedFitness > worstIndividualBiasedFitness))
-		{
-			worstIndividualBiasedFitness = pop[i]->biasedFitness;
-			isWorstIndividualClone = isClone;
-			worstIndividualPosition = i;
-			worstIndividual = pop[i];
-		}
-	}
-
-	// Removing the individual from the population and freeing memory
-	pop.erase(pop.begin() + worstIndividualPosition);
-
-	// Cleaning its distances from the other individuals in the population
-	for (Individual *indiv2 : pop)
-	{
-		auto it = indiv2->indivsPerProximity.begin();
-		while (it->second != worstIndividual)
-			++it;
-		indiv2->indivsPerProximity.erase(it);
-	}
-
-	// Freeing memory
-	delete worstIndividual;
-}
-
-void Population::restart()
-{
-	if (params.verbose)
-		std::cout << "----- RESET: CREATING A NEW POPULATION -----" << std::endl;
-	for (Individual *indiv : feasibleSubpop)
-		delete indiv;
-	for (Individual *indiv : infeasibleSubpop)
-		delete indiv;
-	feasibleSubpop.clear();
-	infeasibleSubpop.clear();
-	bestSolutionRestart = Individual(params);
-	generatePopulation();
-}
-
-void Population::managePenalties()
-{
-	// Setting some bounds [0.1,100000] to the penalty values for safety
-	double fractionFeasibleLoad = (double)std::count(listFeasibilityLoad.begin(), listFeasibilityLoad.end(), true) / (double)listFeasibilityLoad.size();
-	if (fractionFeasibleLoad < params.ap.targetFeasible - 0.05 && params.penaltyCapacity < 100000.)
-		params.penaltyCapacity = std::min<double>(params.penaltyCapacity * params.ap.penaltyIncrease, 100000.);
-	else if (fractionFeasibleLoad > params.ap.targetFeasible + 0.05 && params.penaltyCapacity > 0.1)
-		params.penaltyCapacity = std::max<double>(params.penaltyCapacity * params.ap.penaltyDecrease, 0.1);
-
-	// Setting some bounds [0.1,100000] to the penalty values for safety
-	double fractionFeasibleDuration = (double)std::count(listFeasibilityDuration.begin(), listFeasibilityDuration.end(), true) / (double)listFeasibilityDuration.size();
-	if (fractionFeasibleDuration < params.ap.targetFeasible - 0.05 && params.penaltyDuration < 100000.)
-		params.penaltyDuration = std::min<double>(params.penaltyDuration * params.ap.penaltyIncrease, 100000.);
-	else if (fractionFeasibleDuration > params.ap.targetFeasible + 0.05 && params.penaltyDuration > 0.1)
-		params.penaltyDuration = std::max<double>(params.penaltyDuration * params.ap.penaltyDecrease, 0.1);
-
-	// Update the evaluations
-	for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
-		infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
-
-	// If needed, reorder the individuals in the infeasible subpopulation since the penalty values have changed (simple bubble sort for the sake of simplicity)
-	for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
-	{
-		for (int j = 0; j < (int)infeasibleSubpop.size() - i - 1; j++)
-		{
-			if (infeasibleSubpop[j]->eval.penalizedCost > infeasibleSubpop[j + 1]->eval.penalizedCost + MY_EPSILON)
-			{
-				Individual *indiv = infeasibleSubpop[j];
-				infeasibleSubpop[j] = infeasibleSubpop[j + 1];
-				infeasibleSubpop[j + 1] = indiv;
-			}
-		}
-	}
-}
-
-const Individual &Population::getBinaryTournament()
-{
-	// Picking two individuals with uniform distribution over the union of the feasible and infeasible subpopulations
-	std::uniform_int_distribution<> distr(0, feasibleSubpop.size() + infeasibleSubpop.size() - 1);
-	int place1 = distr(params.ran);
-	int place2 = distr(params.ran);
-	Individual *indiv1 = (place1 >= (int)feasibleSubpop.size()) ? infeasibleSubpop[place1 - feasibleSubpop.size()] : feasibleSubpop[place1];
-	Individual *indiv2 = (place2 >= (int)feasibleSubpop.size()) ? infeasibleSubpop[place2 - feasibleSubpop.size()] : feasibleSubpop[place2];
-
-	// Keeping the best of the two in terms of biased fitness
-	updateBiasedFitnesses(feasibleSubpop);
-	updateBiasedFitnesses(infeasibleSubpop);
-	if (indiv1->biasedFitness < indiv2->biasedFitness)
-		return *indiv1;
-	else
-		return *indiv2;
-}
-
-const Individual *Population::getBestFeasible()
-{
-	if (!feasibleSubpop.empty())
-		return feasibleSubpop[0];
-	else
-		return NULL;
-}
-
-const Individual *Population::getBestInfeasible()
-{
-	if (!infeasibleSubpop.empty())
-		return infeasibleSubpop[0];
-	else
-		return NULL;
-}
-
-const Individual *Population::getBestFound()
-{
-	if (bestSolutionOverall.eval.penalizedCost < 1.e29)
-		return &bestSolutionOverall;
-	else
-		return NULL;
-}
-
-void Population::printState(int nbIter, int nbIterNoImprovement)
-{
-	if (params.verbose)
-	{
-		std::printf("It %6d %6d | T(s) %.2f", nbIter, nbIterNoImprovement, (double)(clock() - params.startTime) / (double)CLOCKS_PER_SEC);
-
-		if (getBestFeasible() != NULL)
-			std::printf(" | Feas %zu %.2f %.2f", feasibleSubpop.size(), getBestFeasible()->eval.penalizedCost, getAverageCost(feasibleSubpop));
-		else
-			std::printf(" | NO-FEASIBLE");
-
-		if (getBestInfeasible() != NULL)
-			std::printf(" | Inf %zu %.2f %.2f", infeasibleSubpop.size(), getBestInfeasible()->eval.penalizedCost, getAverageCost(infeasibleSubpop));
-		else
-			std::printf(" | NO-INFEASIBLE");
-
-		std::printf(" | Div %.2f %.2f", getDiversity(feasibleSubpop), getDiversity(infeasibleSubpop));
-		std::printf(" | Feas %.2f %.2f", (double)std::count(listFeasibilityLoad.begin(), listFeasibilityLoad.end(), true) / (double)listFeasibilityLoad.size(), (double)std::count(listFeasibilityDuration.begin(), listFeasibilityDuration.end(), true) / (double)listFeasibilityDuration.size());
-		std::printf(" | Pen %.2f %.2f", params.penaltyCapacity, params.penaltyDuration);
-		std::cout << std::endl;
-	}
-}
-
-double Population::brokenPairsDistance(const Individual &indiv1, const Individual &indiv2)
-{
-	int differences = 0;
-	for (int j = 1; j <= params.nbClients; j++)
-	{
-		if (indiv1.successors[j] != indiv2.successors[j] && indiv1.successors[j] != indiv2.predecessors[j])
-			differences++;
-		if (indiv1.predecessors[j] == 0 && indiv2.predecessors[j] != 0 && indiv2.successors[j] != 0)
-			differences++;
-	}
-	return (double)differences / (double)params.nbClients;
-}
-
-double Population::averageBrokenPairsDistanceClosest(const Individual &indiv, int nbClosest)
-{
-	double result = 0.;
-	int maxSize = std::min<int>(nbClosest, indiv.indivsPerProximity.size());
-	auto it = indiv.indivsPerProximity.begin();
-	for (int i = 0; i < maxSize; i++)
-	{
-		result += it->first;
-		++it;
-	}
-	return result / (double)maxSize;
-}
-
-double Population::getDiversity(const SubPopulation &pop)
-{
-	double average = 0.;
-	int size = std::min<int>(params.ap.mu, pop.size()); // Only monitoring the "mu" better solutions to avoid too much noise in the measurements
-	for (int i = 0; i < size; i++)
-		average += averageBrokenPairsDistanceClosest(*pop[i], size);
-	if (size > 0)
-		return average / (double)size;
-	else
-		return -1.0;
-}
-
-double Population::getAverageCost(const SubPopulation &pop)
-{
-	double average = 0.;
-	int size = std::min<int>(params.ap.mu, pop.size()); // Only monitoring the "mu" better solutions to avoid too much noise in the measurements
-	for (int i = 0; i < size; i++)
-		average += pop[i]->eval.penalizedCost;
-	if (size > 0)
-		return average / (double)size;
-	else
-		return -1.0;
-}
-
-void Population::exportSearchProgress(std::string fileName, std::string instanceName)
-{
-	std::ofstream myfile(fileName);
-	for (std::pair<clock_t, double> state : searchProgress)
-		myfile << instanceName << ";" << params.ap.seed << ";" << state.second << ";" << (double)state.first / (double)CLOCKS_PER_SEC << std::endl;
-}
-
-void Population::exportCVRPLibFormat(const Individual &indiv, std::string fileName)
-{
-	std::ofstream myfile(fileName);
-	if (myfile.is_open())
-	{
-		for (int k = 0; k < (int)indiv.chromR.size(); k++)
-		{
-			if (!indiv.chromR[k].empty())
-			{
-				myfile << "Route #" << k + 1 << ":"; // Route IDs start at 1 in the file format
-				for (int i : indiv.chromR[k])
-					myfile << " " << i;
-				myfile << std::endl;
-			}
-		}
-		myfile << "Cost " << indiv.eval.penalizedCost << std::endl;
-	}
-	else
-		std::cout << "----- IMPOSSIBLE TO OPEN: " << fileName << std::endl;
-}
-
-Population::Population(Params &params, Split &split, LocalSearch &localSearch) : params(params), split(split), localSearch(localSearch), bestSolutionRestart(params), bestSolutionOverall(params)
-{
-	listFeasibilityLoad = std::list<bool>(params.ap.nbIterPenaltyManagement, true);
-	listFeasibilityDuration = std::list<bool>(params.ap.nbIterPenaltyManagement, true);
-}
-
-Population::~Population()
-{
-	for (int i = 0; i < (int)feasibleSubpop.size(); i++)
-		delete feasibleSubpop[i];
-	for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
-		delete infeasibleSubpop[i];
-}
-
-void Split::generalSplit(Individual &indiv, int nbMaxVehicles)
-{
-	// Do not apply Split with fewer vehicles than the trivial (LP) bin packing bound
-	maxVehicles = std::max<int>(nbMaxVehicles, std::ceil(params.totalDemand / params.vehicleCapacity));
-
-	// Initialization of the data structures for the linear split algorithms
-	// Direct application of the code located at https://github.com/vidalt/Split-Library
-	for (int i = 1; i <= params.nbClients; i++)
-	{
-		cliSplit[i].demand = params.cli[indiv.chromT[i - 1]].demand;
-		cliSplit[i].serviceTime = params.cli[indiv.chromT[i - 1]].serviceDuration;
-		cliSplit[i].d0_x = params.timeCost[0][indiv.chromT[i - 1]];
-		cliSplit[i].dx_0 = params.timeCost[indiv.chromT[i - 1]][0];
-		if (i < params.nbClients)
-			cliSplit[i].dnext = params.timeCost[indiv.chromT[i - 1]][indiv.chromT[i]];
-		else
-			cliSplit[i].dnext = -1.e30;
-		sumLoad[i] = sumLoad[i - 1] + cliSplit[i].demand;
-		sumService[i] = sumService[i - 1] + cliSplit[i].serviceTime;
-		sumDistance[i] = sumDistance[i - 1] + cliSplit[i - 1].dnext;
-	}
-
-	// We first try the simple split, and then the Split with limited fleet if this is not successful
-	if (splitSimple(indiv) == 0)
-		splitLF(indiv);
-
-	// Build up the rest of the Individual structure
-	indiv.evaluateCompleteCost(params);
-}
-
-int Split::splitSimple(Individual &indiv)
-{
-	// Reinitialize the potential structures
-	potential[0][0] = 0;
-	for (int i = 1; i <= params.nbClients; i++)
-		potential[0][i] = 1.e30;
-
-	// MAIN ALGORITHM -- Simple Split using Bellman's algorithm in topological order
-	// This code has been maintained as it is very simple and can be easily adapted to a variety of constraints, whereas the O(n) Split has a more restricted application scope
-	if (params.isDurationConstraint)
-	{
-		for (int i = 0; i < params.nbClients; i++)
-		{
-			double load = 0.;
-			double distance = 0.;
-			double serviceDuration = 0.;
-			for (int j = i + 1; j <= params.nbClients && load <= 1.5 * params.vehicleCapacity; j++)
-			{
-				load += cliSplit[j].demand;
-				serviceDuration += cliSplit[j].serviceTime;
-				if (j == i + 1)
-					distance += cliSplit[j].d0_x;
-				else
-					distance += cliSplit[j - 1].dnext;
-				double cost = distance + cliSplit[j].dx_0 + params.penaltyCapacity * std::max<double>(load - params.vehicleCapacity, 0.) + params.penaltyDuration * std::max<double>(distance + cliSplit[j].dx_0 + serviceDuration - params.durationLimit, 0.);
-				if (potential[0][i] + cost < potential[0][j])
-				{
-					potential[0][j] = potential[0][i] + cost;
-					pred[0][j] = i;
-				}
-			}
-		}
-	}
-	else
-	{
-		Trivial_Deque queue = Trivial_Deque(params.nbClients + 1, 0);
-		for (int i = 1; i <= params.nbClients; i++)
-		{
-			// The front is the best predecessor for i
-			potential[0][i] = propagate(queue.get_front(), i, 0);
-			pred[0][i] = queue.get_front();
-
-			if (i < params.nbClients)
-			{
-				// If i is not dominated by the last of the pile
-				if (!dominates(queue.get_back(), i, 0))
-				{
-					// then i will be inserted, need to remove whoever is dominated by i.
-					while (queue.size() > 0 && dominatesRight(queue.get_back(), i, 0))
-						queue.pop_back();
-					queue.push_back(i);
-				}
-				// Check iteratively if front is dominated by the next front
-				while (queue.size() > 1 && propagate(queue.get_front(), i + 1, 0) > propagate(queue.get_next_front(), i + 1, 0) - MY_EPSILON)
-					queue.pop_front();
-			}
-		}
-	}
-
-	if (potential[0][params.nbClients] > 1.e29)
-		throw std::string("ERROR : no Split solution has been propagated until the last node");
-
-	// Filling the chromR structure
-	for (int k = params.nbVehicles - 1; k >= maxVehicles; k--)
-		indiv.chromR[k].clear();
-
-	int end = params.nbClients;
-	for (int k = maxVehicles - 1; k >= 0; k--)
-	{
-		indiv.chromR[k].clear();
-		int begin = pred[0][end];
-		for (int ii = begin; ii < end; ii++)
-			indiv.chromR[k].push_back(indiv.chromT[ii]);
-		end = begin;
-	}
-
-	// Return OK in case the Split algorithm reached the beginning of the routes
-	return (end == 0);
-}
-
-// Split for problems with limited fleet
-int Split::splitLF(Individual &indiv)
-{
-	// Initialize the potential structures
-	potential[0][0] = 0;
-	for (int k = 0; k <= maxVehicles; k++)
-		for (int i = 1; i <= params.nbClients; i++)
-			potential[k][i] = 1.e30;
-
-	// MAIN ALGORITHM -- Simple Split using Bellman's algorithm in topological order
-	// This code has been maintained as it is very simple and can be easily adapted to a variety of constraints, whereas the O(n) Split has a more restricted application scope
-	if (params.isDurationConstraint)
-	{
-		for (int k = 0; k < maxVehicles; k++)
-		{
-			for (int i = k; i < params.nbClients && potential[k][i] < 1.e29; i++)
-			{
-				double load = 0.;
-				double serviceDuration = 0.;
-				double distance = 0.;
-				for (int j = i + 1; j <= params.nbClients && load <= 1.5 * params.vehicleCapacity; j++) // Setting a maximum limit on load infeasibility to accelerate the algorithm
-				{
-					load += cliSplit[j].demand;
-					serviceDuration += cliSplit[j].serviceTime;
-					if (j == i + 1)
-						distance += cliSplit[j].d0_x;
-					else
-						distance += cliSplit[j - 1].dnext;
-					double cost = distance + cliSplit[j].dx_0 + params.penaltyCapacity * std::max<double>(load - params.vehicleCapacity, 0.) + params.penaltyDuration * std::max<double>(distance + cliSplit[j].dx_0 + serviceDuration - params.durationLimit, 0.);
-					if (potential[k][i] + cost < potential[k + 1][j])
-					{
-						potential[k + 1][j] = potential[k][i] + cost;
-						pred[k + 1][j] = i;
-					}
-				}
-			}
-		}
-	}
-	else // MAIN ALGORITHM -- Without duration constraints in O(n), from "Vidal, T. (2016). Split algorithm in O(n) for the capacitated vehicle routing problem. C&OR"
-	{
-		Trivial_Deque queue = Trivial_Deque(params.nbClients + 1, 0);
-		for (int k = 0; k < maxVehicles; k++)
-		{
-			// in the Split problem there is always one feasible solution with k routes that reaches the index k in the tour.
-			queue.reset(k);
-
-			// The range of potentials < 1.29 is always an interval.
-			// The size of the queue will stay >= 1 until we reach the end of this interval.
-			for (int i = k + 1; i <= params.nbClients && queue.size() > 0; i++)
-			{
-				// The front is the best predecessor for i
-				potential[k + 1][i] = propagate(queue.get_front(), i, k);
-				pred[k + 1][i] = queue.get_front();
-
-				if (i < params.nbClients)
-				{
-					// If i is not dominated by the last of the pile
-					if (!dominates(queue.get_back(), i, k))
-					{
-						// then i will be inserted, need to remove whoever he dominates
-						while (queue.size() > 0 && dominatesRight(queue.get_back(), i, k))
-							queue.pop_back();
-						queue.push_back(i);
-					}
-
-					// Check iteratively if front is dominated by the next front
-					while (queue.size() > 1 && propagate(queue.get_front(), i + 1, k) > propagate(queue.get_next_front(), i + 1, k) - MY_EPSILON)
-						queue.pop_front();
-				}
-			}
-		}
-	}
-
-	if (potential[maxVehicles][params.nbClients] > 1.e29)
-		throw std::string("ERROR : no Split solution has been propagated until the last node");
-
-	// It could be cheaper to use a smaller number of vehicles
-	double minCost = potential[maxVehicles][params.nbClients];
-	int nbRoutes = maxVehicles;
-	for (int k = 1; k < maxVehicles; k++)
-		if (potential[k][params.nbClients] < minCost)
-		{
-			minCost = potential[k][params.nbClients];
-			nbRoutes = k;
-		}
-
-	// Filling the chromR structure
-	for (int k = params.nbVehicles - 1; k >= nbRoutes; k--)
-		indiv.chromR[k].clear();
-
-	int end = params.nbClients;
-	for (int k = nbRoutes - 1; k >= 0; k--)
-	{
-		indiv.chromR[k].clear();
-		int begin = pred[k + 1][end];
-		for (int ii = begin; ii < end; ii++)
-			indiv.chromR[k].push_back(indiv.chromT[ii]);
-		end = begin;
-	}
-
-	// Return OK in case the Split algorithm reached the beginning of the routes
-	return (end == 0);
-}
-
-Split::Split(const Params &params) : params(params)
-{
-	// Structures of the linear Split
-	cliSplit = std::vector<ClientSplit>(params.nbClients + 1);
-	sumDistance = std::vector<double>(params.nbClients + 1, 0.);
-	sumLoad = std::vector<double>(params.nbClients + 1, 0.);
-	sumService = std::vector<double>(params.nbClients + 1, 0.);
-	potential = std::vector<std::vector<double>>(params.nbVehicles + 1, std::vector<double>(params.nbClients + 1, 1.e30));
-	pred = std::vector<std::vector<int>>(params.nbVehicles + 1, std::vector<int>(params.nbClients + 1, 0));
-}
-
-void Genetic::run()
-{
-	/* INITIAL POPULATION */
-	population.generatePopulation();
-
-	int nbIter;
-	int nbIterNonProd = 1;
-	if (params.verbose)
-		std::cout << "----- STARTING GENETIC ALGORITHM" << std::endl;
-	for (nbIter = 0; nbIterNonProd <= params.ap.nbIter && (params.ap.timeLimit == 0 || (double)(clock() - params.startTime) < params.ap.timeLimit); nbIter++)
-	{
-		/* SELECTION AND CROSSOVER */
-		crossoverOX(offspring, population.getBinaryTournament(), population.getBinaryTournament());
-
-		localSearch.run(offspring, params.penaltyCapacity, params.penaltyDuration);
-
-		bool isNewBest = population.addIndividual(offspring, true);
-		if (!offspring.eval.isFeasible && params.ran() % 2 == 0) // Repair half of the solutions in case of infeasibility
-		{
-			localSearch.run(offspring, params.penaltyCapacity * 10., params.penaltyDuration * 10.);
-			if (offspring.eval.isFeasible)
-				isNewBest = (population.addIndividual(offspring, false) || isNewBest);
-		}
-
-		/* TRACKING THE NUMBER OF ITERATIONS SINCE LAST SOLUTION IMPROVEMENT */
-		if (isNewBest)
-			nbIterNonProd = 1;
-		else
-			nbIterNonProd++;
-
-		/* DIVERSIFICATION, PENALTY MANAGEMENT AND TRACES */
-		if (nbIter % params.ap.nbIterPenaltyManagement == 0)
-			population.managePenalties();
-		if (nbIter % params.ap.nbIterTraces == 0)
-			population.printState(nbIter, nbIterNonProd);
-
-		/* FOR TESTS INVOLVING SUCCESSIVE RUNS UNTIL A TIME LIMIT: WE RESET THE ALGORITHM/POPULATION EACH TIME maxIterNonProd IS ATTAINED*/
-		if (params.ap.timeLimit != 0 && nbIterNonProd == params.ap.nbIter)
-		{
-			population.restart();
-			nbIterNonProd = 1;
-		}
-	}
-	if (params.verbose)
-		std::cout << "----- GENETIC ALGORITHM FINISHED AFTER " << nbIter << " ITERATIONS. TIME SPENT: " << (double)(clock() - params.startTime) / (double)CLOCKS_PER_SEC << std::endl;
-}
-
-void Genetic::crossoverOX(Individual &result, const Individual &parent1, const Individual &parent2)
-{
-	// Frequency table to track the customers which have been already inserted
-	std::vector<bool> freqClient = std::vector<bool>(params.nbClients + 1, false);
-
-	// Picking the beginning and end of the crossover zone
-	std::uniform_int_distribution<> distr(0, params.nbClients - 1);
-	int start = distr(params.ran);
-	int end = distr(params.ran);
-
-	// Avoid that start and end coincide by accident
-	while (end == start)
-		end = distr(params.ran);
-
-	// Copy from start to end
-	int j = start;
-	while (j % params.nbClients != (end + 1) % params.nbClients)
-	{
-		result.chromT[j % params.nbClients] = parent1.chromT[j % params.nbClients];
-		freqClient[result.chromT[j % params.nbClients]] = true;
-		j++;
-	}
-
-	// Fill the remaining elements in the order given by the second parent
-	for (int i = 1; i <= params.nbClients; i++)
-	{
-		int temp = parent2.chromT[(end + i) % params.nbClients];
-		if (freqClient[temp] == false)
-		{
-			result.chromT[j % params.nbClients] = temp;
-			j++;
-		}
-	}
-
-	// Complete the individual with the Split algorithm
-	split.generalSplit(result, parent1.eval.nbRoutes);
-}
-
-Genetic::Genetic(Params &params) : params(params),
-								   split(params),
-								   localSearch(params),
-								   population(params, this->split, this->localSearch),
-								   offspring(params) {}
+#include "LocalSearch.h"
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <curand_kernel.h>
+#define NUM_THREADS 1024
+#define BLOCKS 1024
 
 void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
 {
@@ -1200,71 +523,19 @@ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penalt
 			searchCompleted = true;
 
 		//[edit]parallelizing from here
-		int tid = threadIdx.x + blockIdx.x * blockDim.x;
-		int divisions = (params.nbClients / (NUM_THREADS * BLOCKS));
-		if (divisions == 0)
-		{
-			divisions++;
-		}
 
-		if (tid > 0 && tid < BLOCKS * NUM_THREADS)
+		/*[edit] CLASSICAL ROUTE IMPROVEMENT (RI) MOVES SUBJECT TO A PROXIMITY RESTRICTION */
+		for (int posU = 0; posU < params.nbClients; posU++)
 		{
-			/*[edit] CLASSICAL ROUTE IMPROVEMENT (RI) MOVES SUBJECT TO A PROXIMITY RESTRICTION */
-			for (int posU = 0; posU < divisions; posU++)
+			nodeU = &clients[orderNodes[posU]]; //[edit]
+			int lastTestRINodeU = nodeU->whenLastTestedRI;
+			nodeU->whenLastTestedRI = nbMoves;
+			for (int posV = 0; posV < (int)params.correlatedVertices[nodeU->cour].size(); posV++)
 			{
-				nodeU = &clients[orderNodes[tid * divisions + posU]]; //[edit]
-				int lastTestRINodeU = nodeU->whenLastTestedRI;
-				nodeU->whenLastTestedRI = nbMoves;
-				for (int posV = 0; posV < (int)params.correlatedVertices[nodeU->cour].size(); posV++)
+				nodeV = &clients[params.correlatedVertices[nodeU->cour][posV]];
+				if (loopID == 0 || std::max<int>(nodeU->route->whenLastModified, nodeV->route->whenLastModified) > lastTestRINodeU) // only evaluate moves involving routes that have been modified since last move evaluations for nodeU
 				{
-					nodeV = &clients[params.correlatedVertices[nodeU->cour][posV]];
-					if (loopID == 0 || std::max<int>(nodeU->route->whenLastModified, nodeV->route->whenLastModified) > lastTestRINodeU) // only evaluate moves involving routes that have been modified since last move evaluations for nodeU
-					{
-						// Randomizing the order of the neighborhoods within this loop does not matter much as we are already randomizing the order of the node pairs (and it's not very common to find improving moves of different types for the same node pair)
-						setLocalVariablesRouteU();
-						setLocalVariablesRouteV();
-						if (move1())
-							continue; // RELOCATE
-						if (move2())
-							continue; // RELOCATE
-						if (move3())
-							continue; // RELOCATE
-						if (nodeUIndex <= nodeVIndex && move4())
-							continue; // SWAP
-						if (move5())
-							continue; // SWAP
-						if (nodeUIndex <= nodeVIndex && move6())
-							continue; // SWAP
-						if (intraRouteMove && move7())
-							continue; // 2-OPT
-						if (!intraRouteMove && move8())
-							continue; // 2-OPT*
-						if (!intraRouteMove && move9())
-							continue; // 2-OPT*
-
-						// Trying moves that insert nodeU directly after the depot
-						if (nodeV->prev->isDepot)
-						{
-							nodeV = nodeV->prev;
-							setLocalVariablesRouteV();
-							if (move1())
-								continue; // RELOCATE
-							if (move2())
-								continue; // RELOCATE
-							if (move3())
-								continue; // RELOCATE
-							if (!intraRouteMove && move8())
-								continue; // 2-OPT*
-							if (!intraRouteMove && move9())
-								continue; // 2-OPT*
-						}
-					}
-				}
-
-				/* MOVES INVOLVING AN EMPTY ROUTE -- NOT TESTED IN THE FIRST LOOP TO AVOID INCREASING TOO MUCH THE FLEET SIZE */
-				if (loopID > 0 && !emptyRoutes.empty())
-				{
-					nodeV = routes[*emptyRoutes.begin()].depot;
+					// Randomizing the order of the neighborhoods within this loop does not matter much as we are already randomizing the order of the node pairs (and it's not very common to find improving moves of different types for the same node pair)
 					setLocalVariablesRouteU();
 					setLocalVariablesRouteV();
 					if (move1())
@@ -1273,26 +544,69 @@ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penalt
 						continue; // RELOCATE
 					if (move3())
 						continue; // RELOCATE
-					if (move9())
+					if (nodeUIndex <= nodeVIndex && move4())
+						continue; // SWAP
+					if (move5())
+						continue; // SWAP
+					if (nodeUIndex <= nodeVIndex && move6())
+						continue; // SWAP
+					if (intraRouteMove && move7())
+						continue; // 2-OPT
+					if (!intraRouteMove && move8())
 						continue; // 2-OPT*
+					if (!intraRouteMove && move9())
+						continue; // 2-OPT*
+
+					// Trying moves that insert nodeU directly after the depot
+					if (nodeV->prev->isDepot)
+					{
+						nodeV = nodeV->prev;
+						setLocalVariablesRouteV();
+						if (move1())
+							continue; // RELOCATE
+						if (move2())
+							continue; // RELOCATE
+						if (move3())
+							continue; // RELOCATE
+						if (!intraRouteMove && move8())
+							continue; // 2-OPT*
+						if (!intraRouteMove && move9())
+							continue; // 2-OPT*
+					}
 				}
 			}
-		}
-		if (params.ap.useSwapStar == 1 && params.areCoordinatesProvided)
-		{
-			/* (SWAP*) MOVES LIMITED TO ROUTE PAIRS WHOSE CIRCLE SECTORS OVERLAP */
-			for (int rU = 0; rU < params.nbVehicles; rU++)
+
+			/* MOVES INVOLVING AN EMPTY ROUTE -- NOT TESTED IN THE FIRST LOOP TO AVOID INCREASING TOO MUCH THE FLEET SIZE */
+			if (loopID > 0 && !emptyRoutes.empty())
 			{
-				routeU = &routes[orderRoutes[rU]];
-				int lastTestSWAPStarRouteU = routeU->whenLastTestedSWAPStar;
-				routeU->whenLastTestedSWAPStar = nbMoves;
-				for (int rV = 0; rV < params.nbVehicles; rV++)
-				{
-					routeV = &routes[orderRoutes[rV]];
-					if (routeU->nbCustomers > 0 && routeV->nbCustomers > 0 && routeU->cour < routeV->cour && (loopID == 0 || std::max<int>(routeU->whenLastModified, routeV->whenLastModified) > lastTestSWAPStarRouteU))
-						if (CircleSector::overlap(routeU->sector, routeV->sector))
-							swapStar();
-				}
+				nodeV = routes[*emptyRoutes.begin()].depot;
+				setLocalVariablesRouteU();
+				setLocalVariablesRouteV();
+				if (move1())
+					continue; // RELOCATE
+				if (move2())
+					continue; // RELOCATE
+				if (move3())
+					continue; // RELOCATE
+				if (move9())
+					continue; // 2-OPT*
+			}
+		}
+	}
+	if (params.ap.useSwapStar == 1 && params.areCoordinatesProvided)
+	{
+		/* (SWAP*) MOVES LIMITED TO ROUTE PAIRS WHOSE CIRCLE SECTORS OVERLAP */
+		for (int rU = 0; rU < params.nbVehicles; rU++)
+		{
+			routeU = &routes[orderRoutes[rU]];
+			int lastTestSWAPStarRouteU = routeU->whenLastTestedSWAPStar;
+			routeU->whenLastTestedSWAPStar = nbMoves;
+			for (int rV = 0; rV < params.nbVehicles; rV++)
+			{
+				routeV = &routes[orderRoutes[rV]];
+				if (routeU->nbCustomers > 0 && routeV->nbCustomers > 0 && routeU->cour < routeV->cour && (loopID == 0 || std::max<int>(routeU->whenLastModified, routeV->whenLastModified) > lastTestSWAPStarRouteU))
+					if (CircleSector::overlap(routeU->sector, routeV->sector))
+						swapStar();
 			}
 		}
 	}
@@ -1865,7 +1179,7 @@ struct Client
 	int polarAngle;			// Polar angle of the client around the depot, measured in degrees and truncated for convenience
 };*/
 
-__global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynode, int myplace, double myload, double mytime, double myReversalDistance, double cumulatedX, double cumulatedY, bool firstIt, vector<struct Client> *params_cli, vector<double> *params_timeCost)
+__global__ void updateRouteData_kernel(Route *myRoute, Node *mynode, int myplace, double myload, double mytime, double myReversalDistance, double cumulatedX, double cumulatedY, bool firstIt, vector<Client> *params_cli, vector<double> *params_timeCost)
 {
 
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -1910,8 +1224,14 @@ void LocalSearch::updateRouteData(Route *myRoute)
 	mynode->cumulatedReversalDistance = 0.;
 
 	bool firstIt = true;
+	Node *mynode = myRoute->depot;
+	mynode->position = 0;
+	mynode->cumulatedLoad = 0.;
+	mynode->cumulatedTime = 0.;
+	mynode->cumulatedReversalDistance = 0.;
 
-<<<<<<< HEAD
+	bool firstIt = true;
+
 	Route *parallel_myRoute;
 	Node *parallel_mynode;
 	vector<Client> *params_cli;
@@ -1919,18 +1239,16 @@ void LocalSearch::updateRouteData(Route *myRoute)
 
 	vector<Client> *params_cli2;
 	vector<double> *params_timeCost2;
-	
-	int count=0;
+
+	int count = 0;
 	while (!mynode->isDepot || firstIt)
 	{
 		count++;
 		params_cli2->push_back(params.cli[mynode->cour]);
 		params_timeCost2->push_back(params.timeCost[mynode->prev->cour][mynode->cour]);
 	}
-=======
 
-	updateRouteData<<BLOCKS,NUM_THREADS>>(myRoute,mynode,myplace,myload,mytime,myReversalDistance,cumulatedX,cumulatedY,firstIt,params_cli,params_timecost);
-
+	updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timeCost);
 
 
 	/*while (!mynode->isDepot || firstIt)
@@ -1959,16 +1277,16 @@ void LocalSearch::updateRouteData(Route *myRoute)
 
 	cudaMalloc((void **)&parallel_myRoute, sizeof(Route));
 	cudaMalloc((void **)&parallel_mynode, sizeof(Route));
-	cudaMalloc((void **)&params_cli, count*sizeof(Client));
-	cudaMalloc((void **)&params_timeCost, count*sizeof(double));
+	cudaMalloc((void **)&params_cli, count * sizeof(Client));
+	cudaMalloc((void **)&params_timeCost, count * sizeof(double));
 
 	cudaMemcpy(parallel_myRoute, myRoute, sizeof(Route), cudaMemcpyHostToDevice);
 	cudaMemcpy(parallel_mynode, mynode, sizeof(Route), cudaMemcpyHostToDevice);
-	cudaMemcpy(params_cli, params_cli2, count*sizeof(Client), cudaMemcpyHostToDevice);
-	cudaMemcpy(params_timeCost, params_timeCost2, count*sizeof(double), cudaMemcpyHostToDevice);
-
-	updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timeCost);
+	cudaMemcpy(params_cli, params_cli2, count * sizeof(Client), cudaMemcpyHostToDevice);
+	cudaMemcpy(params_timeCost, params_timeCost2, count * sizeof(double), cudaMemcpyHostToDevice);
 	
+	updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timeCost);
+
 	/*
 		while (!mynode->isDepot || firstIt)
 		{
@@ -2114,6 +1432,703 @@ LocalSearch::LocalSearch(Params &params) : params(params)
 		orderRoutes.push_back(r);
 }
 
+#include "Params.h"
+
+// The universal constructor for both executable and shared library
+// When the executable is run from the commandline,
+// it will first generate an CVRPLIB instance from .vrp file, then supply necessary information.
+Params::Params(
+	const std::vector<double> &x_coords,
+	const std::vector<double> &y_coords,
+	const std::vector<std::vector<double>> &dist_mtx,
+	const std::vector<double> &service_time,
+	const std::vector<double> &demands,
+	double vehicleCapacity,
+	double durationLimit,
+	int nbVeh,
+	bool isDurationConstraint,
+	bool verbose,
+	const AlgorithmParameters &ap)
+	: ap(ap), isDurationConstraint(isDurationConstraint), nbVehicles(nbVeh), durationLimit(durationLimit),
+	  vehicleCapacity(vehicleCapacity), timeCost(dist_mtx), verbose(verbose)
+{
+	// This marks the starting time of the algorithm
+	startTime = clock();
+
+	nbClients = (int)demands.size() - 1; // Need to substract the depot from the number of nodes
+	totalDemand = 0.;
+	maxDemand = 0.;
+
+	// Initialize RNG
+	ran.seed(ap.seed);
+
+	// check if valid coordinates are provided
+	areCoordinatesProvided = (demands.size() == x_coords.size()) && (demands.size() == y_coords.size());
+
+	cli = std::vector<Client>(nbClients + 1);
+	for (int i = 0; i <= nbClients; i++)
+	{
+		// If useSwapStar==false, x_coords and y_coords may be empty.
+		if (ap.useSwapStar == 1 && areCoordinatesProvided)
+		{
+			cli[i].coordX = x_coords[i];
+			cli[i].coordY = y_coords[i];
+			cli[i].polarAngle = CircleSector::positive_mod(
+				32768. * atan2(cli[i].coordY - cli[0].coordY, cli[i].coordX - cli[0].coordX) / PI);
+		}
+		else
+		{
+			cli[i].coordX = 0.0;
+			cli[i].coordY = 0.0;
+			cli[i].polarAngle = 0.0;
+		}
+
+		cli[i].serviceDuration = service_time[i];
+		cli[i].demand = demands[i];
+		if (cli[i].demand > maxDemand)
+			maxDemand = cli[i].demand;
+		totalDemand += cli[i].demand;
+	}
+
+	if (verbose && ap.useSwapStar == 1 && !areCoordinatesProvided)
+		std::cout << "----- NO COORDINATES HAVE BEEN PROVIDED, SWAP* NEIGHBORHOOD WILL BE DEACTIVATED BY DEFAULT" << std::endl;
+
+	// Default initialization if the number of vehicles has not been provided by the user
+	if (nbVehicles == INT_MAX)
+	{
+		nbVehicles = (int)std::ceil(1.3 * totalDemand / vehicleCapacity) + 3; // Safety margin: 30% + 3 more vehicles than the trivial bin packing LB
+		if (verbose)
+			std::cout << "----- FLEET SIZE WAS NOT SPECIFIED: DEFAULT INITIALIZATION TO " << nbVehicles << " VEHICLES" << std::endl;
+	}
+	else
+	{
+		if (verbose)
+			std::cout << "----- FLEET SIZE SPECIFIED: SET TO " << nbVehicles << " VEHICLES" << std::endl;
+	}
+
+	// Calculation of the maximum distance
+	maxDist = 0.;
+	for (int i = 0; i <= nbClients; i++)
+		for (int j = 0; j <= nbClients; j++)
+			if (timeCost[i][j] > maxDist)
+				maxDist = timeCost[i][j];
+
+	// Calculation of the correlated vertices for each customer (for the granular restriction)
+	correlatedVertices = std::vector<std::vector<int>>(nbClients + 1);
+	std::vector<std::set<int>> setCorrelatedVertices = std::vector<std::set<int>>(nbClients + 1);
+	std::vector<std::pair<double, int>> orderProximity;
+	for (int i = 1; i <= nbClients; i++)
+	{
+		orderProximity.clear();
+		for (int j = 1; j <= nbClients; j++)
+			if (i != j)
+				orderProximity.emplace_back(timeCost[i][j], j);
+		std::sort(orderProximity.begin(), orderProximity.end());
+
+		for (int j = 0; j < std::min<int>(ap.nbGranular, nbClients - 1); j++)
+		{
+			// If i is correlated with j, then j should be correlated with i
+			setCorrelatedVertices[i].insert(orderProximity[j].second);
+			setCorrelatedVertices[orderProximity[j].second].insert(i);
+		}
+	}
+
+	// Filling the vector of correlated vertices
+	for (int i = 1; i <= nbClients; i++)
+		for (int x : setCorrelatedVertices[i])
+			correlatedVertices[i].push_back(x);
+
+	// Safeguards to avoid possible numerical instability in case of instances containing arbitrarily small or large numerical values
+	if (maxDist < 0.1 || maxDist > 100000)
+		throw std::string(
+			"The distances are of very small or large scale. This could impact numerical stability. Please rescale the dataset and run again.");
+	if (maxDemand < 0.1 || maxDemand > 100000)
+		throw std::string(
+			"The demand quantities are of very small or large scale. This could impact numerical stability. Please rescale the dataset and run again.");
+	if (nbVehicles < std::ceil(totalDemand / vehicleCapacity))
+		throw std::string("Fleet size is insufficient to service the considered clients.");
+
+	// A reasonable scale for the initial values of the penalties
+	penaltyDuration = 1;
+	penaltyCapacity = std::max<double>(0.1, std::min<double>(1000., maxDist / maxDemand));
+
+	if (verbose)
+		std::cout << "----- INSTANCE SUCCESSFULLY LOADED WITH " << nbClients << " CLIENTS AND " << nbVehicles << " VEHICLES" << std::endl;
+}
+
+#include "Population.h"
+
+void Population::generatePopulation()
+{
+	if (params.verbose)
+		std::cout << "----- BUILDING INITIAL POPULATION" << std::endl;
+	for (int i = 0; i < 4 * params.ap.mu && (i == 0 || params.ap.timeLimit == 0 || (double)(clock() - params.startTime) < params.ap.timeLimit); i++)
+	{
+		Individual randomIndiv(params);
+		split.generalSplit(randomIndiv, params.nbVehicles);
+		localSearch.run(randomIndiv, params.penaltyCapacity, params.penaltyDuration);
+		addIndividual(randomIndiv, true);
+		if (!randomIndiv.eval.isFeasible && params.ran() % 2 == 0) // Repair half of the solutions in case of infeasibility
+		{
+			localSearch.run(randomIndiv, params.penaltyCapacity * 10., params.penaltyDuration * 10.);
+			if (randomIndiv.eval.isFeasible)
+				addIndividual(randomIndiv, false);
+		}
+	}
+}
+
+bool Population::addIndividual(const Individual &indiv, bool updateFeasible)
+{
+	if (updateFeasible)
+	{
+		listFeasibilityLoad.push_back(indiv.eval.capacityExcess < MY_EPSILON);
+		listFeasibilityDuration.push_back(indiv.eval.durationExcess < MY_EPSILON);
+		listFeasibilityLoad.pop_front();
+		listFeasibilityDuration.pop_front();
+	}
+
+	// Find the adequate subpopulation in relation to the individual feasibility
+	SubPopulation &subpop = (indiv.eval.isFeasible) ? feasibleSubpop : infeasibleSubpop;
+
+	// Create a copy of the individual and updade the proximity structures calculating inter-individual distances
+	Individual *myIndividual = new Individual(indiv);
+	for (Individual *myIndividual2 : subpop)
+	{
+		double myDistance = brokenPairsDistance(*myIndividual, *myIndividual2);
+		myIndividual2->indivsPerProximity.insert({myDistance, myIndividual});
+		myIndividual->indivsPerProximity.insert({myDistance, myIndividual2});
+	}
+
+	// Identify the correct location in the subpopulation and insert the individual
+	int place = (int)subpop.size();
+	while (place > 0 && subpop[place - 1]->eval.penalizedCost > indiv.eval.penalizedCost - MY_EPSILON)
+		place--;
+	subpop.emplace(subpop.begin() + place, myIndividual);
+
+	// Trigger a survivor selection if the maximimum subpopulation size is exceeded
+	if ((int)subpop.size() > params.ap.mu + params.ap.lambda)
+		while ((int)subpop.size() > params.ap.mu)
+			removeWorstBiasedFitness(subpop);
+
+	// Track best solution
+	if (indiv.eval.isFeasible && indiv.eval.penalizedCost < bestSolutionRestart.eval.penalizedCost - MY_EPSILON)
+	{
+		bestSolutionRestart = indiv; // Copy
+		if (indiv.eval.penalizedCost < bestSolutionOverall.eval.penalizedCost - MY_EPSILON)
+		{
+			bestSolutionOverall = indiv;
+			searchProgress.push_back({clock() - params.startTime, bestSolutionOverall.eval.penalizedCost});
+		}
+		return true;
+	}
+	else
+		return false;
+}
+
+void Population::updateBiasedFitnesses(SubPopulation &pop)
+{
+	// Ranking the individuals based on their diversity contribution (decreasing order of distance)
+	std::vector<std::pair<double, int>> ranking;
+	for (int i = 0; i < (int)pop.size(); i++)
+		ranking.push_back({-averageBrokenPairsDistanceClosest(*pop[i], params.ap.nbClose), i});
+	std::sort(ranking.begin(), ranking.end());
+
+	// Updating the biased fitness values
+	if (pop.size() == 1)
+		pop[0]->biasedFitness = 0;
+	else
+	{
+		for (int i = 0; i < (int)pop.size(); i++)
+		{
+			double divRank = (double)i / (double)(pop.size() - 1); // Ranking from 0 to 1
+			double fitRank = (double)ranking[i].second / (double)(pop.size() - 1);
+			if ((int)pop.size() <= params.ap.nbElite) // Elite individuals cannot be smaller than population size
+				pop[ranking[i].second]->biasedFitness = fitRank;
+			else
+				pop[ranking[i].second]->biasedFitness = fitRank + (1.0 - (double)params.ap.nbElite / (double)pop.size()) * divRank;
+		}
+	}
+}
+
+void Population::removeWorstBiasedFitness(SubPopulation &pop)
+{
+	updateBiasedFitnesses(pop);
+	if (pop.size() <= 1)
+		throw std::string("Eliminating the best individual: this should not occur in HGS");
+
+	Individual *worstIndividual = NULL;
+	int worstIndividualPosition = -1;
+	bool isWorstIndividualClone = false;
+	double worstIndividualBiasedFitness = -1.e30;
+	for (int i = 1; i < (int)pop.size(); i++)
+	{
+		bool isClone = (averageBrokenPairsDistanceClosest(*pop[i], 1) < MY_EPSILON); // A distance equal to 0 indicates that a clone exists
+		if ((isClone && !isWorstIndividualClone) || (isClone == isWorstIndividualClone && pop[i]->biasedFitness > worstIndividualBiasedFitness))
+		{
+			worstIndividualBiasedFitness = pop[i]->biasedFitness;
+			isWorstIndividualClone = isClone;
+			worstIndividualPosition = i;
+			worstIndividual = pop[i];
+		}
+	}
+
+	// Removing the individual from the population and freeing memory
+	pop.erase(pop.begin() + worstIndividualPosition);
+
+	// Cleaning its distances from the other individuals in the population
+	for (Individual *indiv2 : pop)
+	{
+		auto it = indiv2->indivsPerProximity.begin();
+		while (it->second != worstIndividual)
+			++it;
+		indiv2->indivsPerProximity.erase(it);
+	}
+
+	// Freeing memory
+	delete worstIndividual;
+}
+
+void Population::restart()
+{
+	if (params.verbose)
+		std::cout << "----- RESET: CREATING A NEW POPULATION -----" << std::endl;
+	for (Individual *indiv : feasibleSubpop)
+		delete indiv;
+	for (Individual *indiv : infeasibleSubpop)
+		delete indiv;
+	feasibleSubpop.clear();
+	infeasibleSubpop.clear();
+	bestSolutionRestart = Individual(params);
+	generatePopulation();
+}
+
+void Population::managePenalties()
+{
+	// Setting some bounds [0.1,100000] to the penalty values for safety
+	double fractionFeasibleLoad = (double)std::count(listFeasibilityLoad.begin(), listFeasibilityLoad.end(), true) / (double)listFeasibilityLoad.size();
+	if (fractionFeasibleLoad < params.ap.targetFeasible - 0.05 && params.penaltyCapacity < 100000.)
+		params.penaltyCapacity = std::min<double>(params.penaltyCapacity * params.ap.penaltyIncrease, 100000.);
+	else if (fractionFeasibleLoad > params.ap.targetFeasible + 0.05 && params.penaltyCapacity > 0.1)
+		params.penaltyCapacity = std::max<double>(params.penaltyCapacity * params.ap.penaltyDecrease, 0.1);
+
+	// Setting some bounds [0.1,100000] to the penalty values for safety
+	double fractionFeasibleDuration = (double)std::count(listFeasibilityDuration.begin(), listFeasibilityDuration.end(), true) / (double)listFeasibilityDuration.size();
+	if (fractionFeasibleDuration < params.ap.targetFeasible - 0.05 && params.penaltyDuration < 100000.)
+		params.penaltyDuration = std::min<double>(params.penaltyDuration * params.ap.penaltyIncrease, 100000.);
+	else if (fractionFeasibleDuration > params.ap.targetFeasible + 0.05 && params.penaltyDuration > 0.1)
+		params.penaltyDuration = std::max<double>(params.penaltyDuration * params.ap.penaltyDecrease, 0.1);
+
+	// Update the evaluations
+	for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
+		infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
+
+	// If needed, reorder the individuals in the infeasible subpopulation since the penalty values have changed (simple bubble sort for the sake of simplicity)
+	for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
+	{
+		for (int j = 0; j < (int)infeasibleSubpop.size() - i - 1; j++)
+		{
+			if (infeasibleSubpop[j]->eval.penalizedCost > infeasibleSubpop[j + 1]->eval.penalizedCost + MY_EPSILON)
+			{
+				Individual *indiv = infeasibleSubpop[j];
+				infeasibleSubpop[j] = infeasibleSubpop[j + 1];
+				infeasibleSubpop[j + 1] = indiv;
+			}
+		}
+	}
+}
+
+const Individual &Population::getBinaryTournament()
+{
+	// Picking two individuals with uniform distribution over the union of the feasible and infeasible subpopulations
+	std::uniform_int_distribution<> distr(0, feasibleSubpop.size() + infeasibleSubpop.size() - 1);
+	int place1 = distr(params.ran);
+	int place2 = distr(params.ran);
+	Individual *indiv1 = (place1 >= (int)feasibleSubpop.size()) ? infeasibleSubpop[place1 - feasibleSubpop.size()] : feasibleSubpop[place1];
+	Individual *indiv2 = (place2 >= (int)feasibleSubpop.size()) ? infeasibleSubpop[place2 - feasibleSubpop.size()] : feasibleSubpop[place2];
+
+	// Keeping the best of the two in terms of biased fitness
+	updateBiasedFitnesses(feasibleSubpop);
+	updateBiasedFitnesses(infeasibleSubpop);
+	if (indiv1->biasedFitness < indiv2->biasedFitness)
+		return *indiv1;
+	else
+		return *indiv2;
+}
+
+const Individual *Population::getBestFeasible()
+{
+	if (!feasibleSubpop.empty())
+		return feasibleSubpop[0];
+	else
+		return NULL;
+}
+
+const Individual *Population::getBestInfeasible()
+{
+	if (!infeasibleSubpop.empty())
+		return infeasibleSubpop[0];
+	else
+		return NULL;
+}
+
+const Individual *Population::getBestFound()
+{
+	if (bestSolutionOverall.eval.penalizedCost < 1.e29)
+		return &bestSolutionOverall;
+	else
+		return NULL;
+}
+
+void Population::printState(int nbIter, int nbIterNoImprovement)
+{
+	if (params.verbose)
+	{
+		std::printf("It %6d %6d | T(s) %.2f", nbIter, nbIterNoImprovement, (double)(clock() - params.startTime) / (double)CLOCKS_PER_SEC);
+
+		if (getBestFeasible() != NULL)
+			std::printf(" | Feas %zu %.2f %.2f", feasibleSubpop.size(), getBestFeasible()->eval.penalizedCost, getAverageCost(feasibleSubpop));
+		else
+			std::printf(" | NO-FEASIBLE");
+
+		if (getBestInfeasible() != NULL)
+			std::printf(" | Inf %zu %.2f %.2f", infeasibleSubpop.size(), getBestInfeasible()->eval.penalizedCost, getAverageCost(infeasibleSubpop));
+		else
+			std::printf(" | NO-INFEASIBLE");
+
+		std::printf(" | Div %.2f %.2f", getDiversity(feasibleSubpop), getDiversity(infeasibleSubpop));
+		std::printf(" | Feas %.2f %.2f", (double)std::count(listFeasibilityLoad.begin(), listFeasibilityLoad.end(), true) / (double)listFeasibilityLoad.size(), (double)std::count(listFeasibilityDuration.begin(), listFeasibilityDuration.end(), true) / (double)listFeasibilityDuration.size());
+		std::printf(" | Pen %.2f %.2f", params.penaltyCapacity, params.penaltyDuration);
+		std::cout << std::endl;
+	}
+}
+
+double Population::brokenPairsDistance(const Individual &indiv1, const Individual &indiv2)
+{
+	int differences = 0;
+	for (int j = 1; j <= params.nbClients; j++)
+	{
+		if (indiv1.successors[j] != indiv2.successors[j] && indiv1.successors[j] != indiv2.predecessors[j])
+			differences++;
+		if (indiv1.predecessors[j] == 0 && indiv2.predecessors[j] != 0 && indiv2.successors[j] != 0)
+			differences++;
+	}
+	return (double)differences / (double)params.nbClients;
+}
+
+double Population::averageBrokenPairsDistanceClosest(const Individual &indiv, int nbClosest)
+{
+	double result = 0.;
+	int maxSize = std::min<int>(nbClosest, indiv.indivsPerProximity.size());
+	auto it = indiv.indivsPerProximity.begin();
+	for (int i = 0; i < maxSize; i++)
+	{
+		result += it->first;
+		++it;
+	}
+	return result / (double)maxSize;
+}
+
+double Population::getDiversity(const SubPopulation &pop)
+{
+	double average = 0.;
+	int size = std::min<int>(params.ap.mu, pop.size()); // Only monitoring the "mu" better solutions to avoid too much noise in the measurements
+	for (int i = 0; i < size; i++)
+		average += averageBrokenPairsDistanceClosest(*pop[i], size);
+	if (size > 0)
+		return average / (double)size;
+	else
+		return -1.0;
+}
+
+double Population::getAverageCost(const SubPopulation &pop)
+{
+	double average = 0.;
+	int size = std::min<int>(params.ap.mu, pop.size()); // Only monitoring the "mu" better solutions to avoid too much noise in the measurements
+	for (int i = 0; i < size; i++)
+		average += pop[i]->eval.penalizedCost;
+	if (size > 0)
+		return average / (double)size;
+	else
+		return -1.0;
+}
+
+void Population::exportSearchProgress(std::string fileName, std::string instanceName)
+{
+	std::ofstream myfile(fileName);
+	for (std::pair<clock_t, double> state : searchProgress)
+		myfile << instanceName << ";" << params.ap.seed << ";" << state.second << ";" << (double)state.first / (double)CLOCKS_PER_SEC << std::endl;
+}
+
+void Population::exportCVRPLibFormat(const Individual &indiv, std::string fileName)
+{
+	std::ofstream myfile(fileName);
+	if (myfile.is_open())
+	{
+		for (int k = 0; k < (int)indiv.chromR.size(); k++)
+		{
+			if (!indiv.chromR[k].empty())
+			{
+				myfile << "Route #" << k + 1 << ":"; // Route IDs start at 1 in the file format
+				for (int i : indiv.chromR[k])
+					myfile << " " << i;
+				myfile << std::endl;
+			}
+		}
+		myfile << "Cost " << indiv.eval.penalizedCost << std::endl;
+	}
+	else
+		std::cout << "----- IMPOSSIBLE TO OPEN: " << fileName << std::endl;
+}
+
+Population::Population(Params &params, Split &split, LocalSearch &localSearch) : params(params), split(split), localSearch(localSearch), bestSolutionRestart(params), bestSolutionOverall(params)
+{
+	listFeasibilityLoad = std::list<bool>(params.ap.nbIterPenaltyManagement, true);
+	listFeasibilityDuration = std::list<bool>(params.ap.nbIterPenaltyManagement, true);
+}
+
+Population::~Population()
+{
+	for (int i = 0; i < (int)feasibleSubpop.size(); i++)
+		delete feasibleSubpop[i];
+	for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
+		delete infeasibleSubpop[i];
+}
+
+#include "Split.h"
+
+void Split::generalSplit(Individual &indiv, int nbMaxVehicles)
+{
+	// Do not apply Split with fewer vehicles than the trivial (LP) bin packing bound
+	maxVehicles = std::max<int>(nbMaxVehicles, std::ceil(params.totalDemand / params.vehicleCapacity));
+
+	// Initialization of the data structures for the linear split algorithms
+	// Direct application of the code located at https://github.com/vidalt/Split-Library
+	for (int i = 1; i <= params.nbClients; i++)
+	{
+		cliSplit[i].demand = params.cli[indiv.chromT[i - 1]].demand;
+		cliSplit[i].serviceTime = params.cli[indiv.chromT[i - 1]].serviceDuration;
+		cliSplit[i].d0_x = params.timeCost[0][indiv.chromT[i - 1]];
+		cliSplit[i].dx_0 = params.timeCost[indiv.chromT[i - 1]][0];
+		if (i < params.nbClients)
+			cliSplit[i].dnext = params.timeCost[indiv.chromT[i - 1]][indiv.chromT[i]];
+		else
+			cliSplit[i].dnext = -1.e30;
+		sumLoad[i] = sumLoad[i - 1] + cliSplit[i].demand;
+		sumService[i] = sumService[i - 1] + cliSplit[i].serviceTime;
+		sumDistance[i] = sumDistance[i - 1] + cliSplit[i - 1].dnext;
+	}
+
+	// We first try the simple split, and then the Split with limited fleet if this is not successful
+	if (splitSimple(indiv) == 0)
+		splitLF(indiv);
+
+	// Build up the rest of the Individual structure
+	indiv.evaluateCompleteCost(params);
+}
+
+int Split::splitSimple(Individual &indiv)
+{
+	// Reinitialize the potential structures
+	potential[0][0] = 0;
+	for (int i = 1; i <= params.nbClients; i++)
+		potential[0][i] = 1.e30;
+
+	// MAIN ALGORITHM -- Simple Split using Bellman's algorithm in topological order
+	// This code has been maintained as it is very simple and can be easily adapted to a variety of constraints, whereas the O(n) Split has a more restricted application scope
+	if (params.isDurationConstraint)
+	{
+		for (int i = 0; i < params.nbClients; i++)
+		{
+			double load = 0.;
+			double distance = 0.;
+			double serviceDuration = 0.;
+			for (int j = i + 1; j <= params.nbClients && load <= 1.5 * params.vehicleCapacity; j++)
+			{
+				load += cliSplit[j].demand;
+				serviceDuration += cliSplit[j].serviceTime;
+				if (j == i + 1)
+					distance += cliSplit[j].d0_x;
+				else
+					distance += cliSplit[j - 1].dnext;
+				double cost = distance + cliSplit[j].dx_0 + params.penaltyCapacity * std::max<double>(load - params.vehicleCapacity, 0.) + params.penaltyDuration * std::max<double>(distance + cliSplit[j].dx_0 + serviceDuration - params.durationLimit, 0.);
+				if (potential[0][i] + cost < potential[0][j])
+				{
+					potential[0][j] = potential[0][i] + cost;
+					pred[0][j] = i;
+				}
+			}
+		}
+	}
+	else
+	{
+		Trivial_Deque queue = Trivial_Deque(params.nbClients + 1, 0);
+		for (int i = 1; i <= params.nbClients; i++)
+		{
+			// The front is the best predecessor for i
+			potential[0][i] = propagate(queue.get_front(), i, 0);
+			pred[0][i] = queue.get_front();
+
+			if (i < params.nbClients)
+			{
+				// If i is not dominated by the last of the pile
+				if (!dominates(queue.get_back(), i, 0))
+				{
+					// then i will be inserted, need to remove whoever is dominated by i.
+					while (queue.size() > 0 && dominatesRight(queue.get_back(), i, 0))
+						queue.pop_back();
+					queue.push_back(i);
+				}
+				// Check iteratively if front is dominated by the next front
+				while (queue.size() > 1 && propagate(queue.get_front(), i + 1, 0) > propagate(queue.get_next_front(), i + 1, 0) - MY_EPSILON)
+					queue.pop_front();
+			}
+		}
+	}
+
+	if (potential[0][params.nbClients] > 1.e29)
+		throw std::string("ERROR : no Split solution has been propagated until the last node");
+
+	// Filling the chromR structure
+	for (int k = params.nbVehicles - 1; k >= maxVehicles; k--)
+		indiv.chromR[k].clear();
+
+	int end = params.nbClients;
+	for (int k = maxVehicles - 1; k >= 0; k--)
+	{
+		indiv.chromR[k].clear();
+		int begin = pred[0][end];
+		for (int ii = begin; ii < end; ii++)
+			indiv.chromR[k].push_back(indiv.chromT[ii]);
+		end = begin;
+	}
+
+	// Return OK in case the Split algorithm reached the beginning of the routes
+	return (end == 0);
+}
+
+// Split for problems with limited fleet
+int Split::splitLF(Individual &indiv)
+{
+	// Initialize the potential structures
+	potential[0][0] = 0;
+	for (int k = 0; k <= maxVehicles; k++)
+		for (int i = 1; i <= params.nbClients; i++)
+			potential[k][i] = 1.e30;
+
+	// MAIN ALGORITHM -- Simple Split using Bellman's algorithm in topological order
+	// This code has been maintained as it is very simple and can be easily adapted to a variety of constraints, whereas the O(n) Split has a more restricted application scope
+	if (params.isDurationConstraint)
+	{
+		for (int k = 0; k < maxVehicles; k++)
+		{
+			for (int i = k; i < params.nbClients && potential[k][i] < 1.e29; i++)
+			{
+				double load = 0.;
+				double serviceDuration = 0.;
+				double distance = 0.;
+				for (int j = i + 1; j <= params.nbClients && load <= 1.5 * params.vehicleCapacity; j++) // Setting a maximum limit on load infeasibility to accelerate the algorithm
+				{
+					load += cliSplit[j].demand;
+					serviceDuration += cliSplit[j].serviceTime;
+					if (j == i + 1)
+						distance += cliSplit[j].d0_x;
+					else
+						distance += cliSplit[j - 1].dnext;
+					double cost = distance + cliSplit[j].dx_0 + params.penaltyCapacity * std::max<double>(load - params.vehicleCapacity, 0.) + params.penaltyDuration * std::max<double>(distance + cliSplit[j].dx_0 + serviceDuration - params.durationLimit, 0.);
+					if (potential[k][i] + cost < potential[k + 1][j])
+					{
+						potential[k + 1][j] = potential[k][i] + cost;
+						pred[k + 1][j] = i;
+					}
+				}
+			}
+		}
+	}
+	else // MAIN ALGORITHM -- Without duration constraints in O(n), from "Vidal, T. (2016). Split algorithm in O(n) for the capacitated vehicle routing problem. C&OR"
+	{
+		Trivial_Deque queue = Trivial_Deque(params.nbClients + 1, 0);
+		for (int k = 0; k < maxVehicles; k++)
+		{
+			// in the Split problem there is always one feasible solution with k routes that reaches the index k in the tour.
+			queue.reset(k);
+
+			// The range of potentials < 1.29 is always an interval.
+			// The size of the queue will stay >= 1 until we reach the end of this interval.
+			for (int i = k + 1; i <= params.nbClients && queue.size() > 0; i++)
+			{
+				// The front is the best predecessor for i
+				potential[k + 1][i] = propagate(queue.get_front(), i, k);
+				pred[k + 1][i] = queue.get_front();
+
+				if (i < params.nbClients)
+				{
+					// If i is not dominated by the last of the pile
+					if (!dominates(queue.get_back(), i, k))
+					{
+						// then i will be inserted, need to remove whoever he dominates
+						while (queue.size() > 0 && dominatesRight(queue.get_back(), i, k))
+							queue.pop_back();
+						queue.push_back(i);
+					}
+
+					// Check iteratively if front is dominated by the next front
+					while (queue.size() > 1 && propagate(queue.get_front(), i + 1, k) > propagate(queue.get_next_front(), i + 1, k) - MY_EPSILON)
+						queue.pop_front();
+				}
+			}
+		}
+	}
+
+	if (potential[maxVehicles][params.nbClients] > 1.e29)
+		throw std::string("ERROR : no Split solution has been propagated until the last node");
+
+	// It could be cheaper to use a smaller number of vehicles
+	double minCost = potential[maxVehicles][params.nbClients];
+	int nbRoutes = maxVehicles;
+	for (int k = 1; k < maxVehicles; k++)
+		if (potential[k][params.nbClients] < minCost)
+		{
+			minCost = potential[k][params.nbClients];
+			nbRoutes = k;
+		}
+
+	// Filling the chromR structure
+	for (int k = params.nbVehicles - 1; k >= nbRoutes; k--)
+		indiv.chromR[k].clear();
+
+	int end = params.nbClients;
+	for (int k = nbRoutes - 1; k >= 0; k--)
+	{
+		indiv.chromR[k].clear();
+		int begin = pred[k + 1][end];
+		for (int ii = begin; ii < end; ii++)
+			indiv.chromR[k].push_back(indiv.chromT[ii]);
+		end = begin;
+	}
+
+	// Return OK in case the Split algorithm reached the beginning of the routes
+	return (end == 0);
+}
+
+Split::Split(const Params &params) : params(params)
+{
+	// Structures of the linear Split
+	cliSplit = std::vector<ClientSplit>(params.nbClients + 1);
+	sumDistance = std::vector<double>(params.nbClients + 1, 0.);
+	sumLoad = std::vector<double>(params.nbClients + 1, 0.);
+	sumService = std::vector<double>(params.nbClients + 1, 0.);
+	potential = std::vector<std::vector<double>>(params.nbVehicles + 1, std::vector<double>(params.nbClients + 1, 1.e30));
+	pred = std::vector<std::vector<int>>(params.nbVehicles + 1, std::vector<int>(params.nbClients + 1, 0));
+}
+
+#include "Genetic.h"
+#include "commandline.h"
+#include "LocalSearch.h"
+#include "Split.h"
+#include "InstanceCVRPLIB.h"
+#include "AlgorithmParameters.h"
+using namespace std;
+
 int main(int argc, char *argv[])
 {
 	try
@@ -2133,29 +2148,17 @@ int main(int argc, char *argv[])
 		Params params(cvrp.x_coords, cvrp.y_coords, cvrp.dist_mtx, cvrp.service_time, cvrp.demands,
 					  cvrp.vehicleCapacity, cvrp.durationLimit, commandline.nbVeh, cvrp.isDurationConstraint, commandline.verbose, commandline.ap);
 
-		cudaDeviceProp props;
-		cudaGetDeviceProperties(&props, 0);
-
-		//[edit]checking for gpu capabailities
-		if (params.nbClients < props.maxThreadsDim[0] * props.maxThreadsDim[1] * props.maxThreadsDim[2] * props.maxThreadsPerBlock * 1000) // blocks*threads*1000
 		// Running HGS
-		{
-			Genetic solver(params);
-			solver.run();
+		Genetic solver(params);
+		solver.run();
 
-			// Exporting the best solution
-			if (solver.population.getBestFound() != NULL)
-			{
-				if (params.verbose)
-					std::cout << "----- WRITING BEST SOLUTION IN : " << commandline.pathSolution << std::endl;
-				solver.population.exportCVRPLibFormat(*solver.population.getBestFound(), commandline.pathSolution);
-				solver.population.exportSearchProgress(commandline.pathSolution + ".PG.csv", commandline.pathInstance);
-			}
-		}
-		else
+		// Exporting the best solution
+		if (solver.population.getBestFound() != NULL)
 		{
-			cout << "Cannot use CUDA due to limitaions (more than 1000 clients per thread)";
-			return 0;
+			if (params.verbose)
+				std::cout << "----- WRITING BEST SOLUTION IN : " << commandline.pathSolution << std::endl;
+			solver.population.exportCVRPLibFormat(*solver.population.getBestFound(), commandline.pathSolution);
+			solver.population.exportSearchProgress(commandline.pathSolution + ".PG.csv", commandline.pathInstance);
 		}
 	}
 	catch (const string &e)
