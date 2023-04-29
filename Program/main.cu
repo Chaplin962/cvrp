@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 #include "Genetic.h"
 #include "commandline.h"
 #include "LocalSearch.h"
@@ -59,3 +60,67 @@ int main(int argc, char *argv[])
 	}
 	return 0;
 }
+=======
+#include "Genetic.h"
+#include "commandline.h"
+#include "LocalSearch.h"
+#include "Split.h"
+#include "InstanceCVRPLIB.h"
+#include "AlgorithmParameters.h"
+using namespace std;
+
+int main(int argc, char *argv[])
+{
+	try
+	{
+		// Reading the arguments of the program
+		CommandLine commandline(argc, argv);
+
+		// Print all algorithm parameter values
+		if (commandline.verbose)
+			print_algorithm_parameters(commandline.ap);
+
+		// Reading the data file and initializing some data structures
+		if (commandline.verbose)
+			std::cout << "----- READING INSTANCE: " << commandline.pathInstance << std::endl;
+		InstanceCVRPLIB cvrp(commandline.pathInstance, commandline.isRoundingInteger);
+
+		Params params(cvrp.x_coords, cvrp.y_coords, cvrp.dist_mtx, cvrp.service_time, cvrp.demands,
+					  cvrp.vehicleCapacity, cvrp.durationLimit, commandline.nbVeh, cvrp.isDurationConstraint, commandline.verbose, commandline.ap);
+
+		cudaDeviceProp props;
+		cudaGetDeviceProperties(&props, 0);
+
+		//[edit]checking for gpu capabailities
+		if (params.nbClients < props.maxThreadsDim[0] * props.maxThreadsDim[1] * props.maxThreadsDim[2] * props.maxThreadsPerBlock * 1000) // blocks*threads*1000
+		// Running HGS
+		{
+			Genetic solver(params);
+			solver.run();
+
+			// Exporting the best solution
+			if (solver.population.getBestFound() != NULL)
+			{
+				if (params.verbose)
+					std::cout << "----- WRITING BEST SOLUTION IN : " << commandline.pathSolution << std::endl;
+				solver.population.exportCVRPLibFormat(*solver.population.getBestFound(), commandline.pathSolution);
+				solver.population.exportSearchProgress(commandline.pathSolution + ".PG.csv", commandline.pathInstance);
+			}
+		}
+		else
+		{
+			cout << "Cannot use CUDA due to limitaions (more than 1000 clients per thread)";
+			return 0;
+		}
+	}
+	catch (const string &e)
+	{
+		std::cout << "EXCEPTION | " << e << std::endl;
+	}
+	catch (const std::exception &e)
+	{
+		std::cout << "EXCEPTION | " << e.what() << std::endl;
+	}
+	return 0;
+}
+>>>>>>> 62dfb14936b294b99fa4505e58b7f299baacbf3e
