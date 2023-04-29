@@ -1880,7 +1880,7 @@ struct Client_kernel
 	int polarAngle;			// Polar angle of the client around the depot, measured in degrees and truncated for convenience
 };
 
-__global__ void updateRouteData_kernel(Route *myRoute,Node *mynode,int myplace,double myload,double mytime,double myReversalDistance,double cumulatedX,double cumulatedY,bool firstIt,vector<Client_kernel>params_cli,vector<vector<double>>params_timeCost){
+__global__ void updateRouteData_kernel(Route *myRoute,Node *mynode,int myplace,double myload,double mytime,double myReversalDistance,double cumulatedX,double cumulatedY,bool firstIt,vector<Client> *params_cli,vector<vector<double>> *params_timeCost){
 	
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
 	
@@ -1928,17 +1928,23 @@ void LocalSearch::updateRouteData(Route *myRoute)
 	Route *parallel_myRoute;
 	Node *parallel_mynode;
 	vector<Client> *params_cli;
-	vector<double> *params_timeCost;
+	vector<vector<double>> *params_timeCost;
 
 	vector<Client> *params_cli2;
-	vector<double> *params_timeCost2;
+	vector<vector<double>> *params_timeCost2;
 	
 	int count=0;
+
+	/*
+	params_cli2->insert(params_cli2->begin(), params.cli.begin(), params.cli.end());
+	params_timeCost2->insert(params_timeCost2->begin(), params.timeCost.begin(), params.timeCost.end());
+	*/
+	
 	while (!mynode->isDepot || firstIt)
 	{
+		params_cli2[count].demand.push_back(params.cli[mynode->cour].demand);
+		params_timeCost2[count].push_back(params.timeCost[mynode->prev->cour][mynode->cour]);
 		count++;
-		params_cli2->push_back(params.cli[mynode->cour]);
-		params_timeCost2->push_back(params.timeCost[mynode->prev->cour][mynode->cour]);
 	}
 
 	cudaMalloc((void **)&parallel_myRoute, sizeof(Route));
@@ -1951,7 +1957,7 @@ void LocalSearch::updateRouteData(Route *myRoute)
 	cudaMemcpy(params_cli, params_cli2, count*sizeof(Client), cudaMemcpyHostToDevice);
 	cudaMemcpy(params_timeCost, params_timeCost2, count*sizeof(double), cudaMemcpyHostToDevice);
 
-	updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timeCost);
+	updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli2, params_timeCost2);
 
 	/*while (!mynode->isDepot || firstIt)
 	{
