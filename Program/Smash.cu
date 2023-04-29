@@ -1911,6 +1911,7 @@ void LocalSearch::updateRouteData(Route *myRoute)
 
 	bool firstIt = true;
 
+<<<<<<< HEAD
 	Route *parallel_myRoute;
 	Node *parallel_mynode;
 	vector<Client> *params_cli;
@@ -1926,6 +1927,35 @@ void LocalSearch::updateRouteData(Route *myRoute)
 		params_cli2->push_back(params.cli[mynode->cour]);
 		params_timeCost2->push_back(params.timeCost[mynode->prev->cour][mynode->cour]);
 	}
+=======
+
+	updateRouteData<<BLOCKS,NUM_THREADS>>(myRoute,mynode,myplace,myload,mytime,myReversalDistance,cumulatedX,cumulatedY,firstIt,params_cli,params_timecost);
+
+
+
+	/*while (!mynode->isDepot || firstIt)
+	{
+		mynode = mynode->next;
+		myplace++;
+		mynode->position = myplace;
+		myload += params.cli[mynode->cour].demand;
+		mytime += params.timeCost[mynode->prev->cour][mynode->cour] + params.cli[mynode->cour].serviceDuration;
+		myReversalDistance += params.timeCost[mynode->cour][mynode->prev->cour] - params.timeCost[mynode->prev->cour][mynode->cour];
+		mynode->cumulatedLoad = myload;
+		mynode->cumulatedTime = mytime;
+		mynode->cumulatedReversalDistance = myReversalDistance;
+		if (!mynode->isDepot)
+		{
+			cumulatedX += params.cli[mynode->cour].coordX;
+			cumulatedY += params.cli[mynode->cour].coordY;
+			if (firstIt)
+				myRoute->sector.initialize(params.cli[mynode->cour].polarAngle);
+			else
+				myRoute->sector.extend(params.cli[mynode->cour].polarAngle);
+		}
+		firstIt = false;
+	}*/
+>>>>>>> 955ad250b356ed7bf17797c652e2f6d88835a879
 
 	cudaMalloc((void **)&parallel_myRoute, sizeof(Route));
 	cudaMalloc((void **)&parallel_mynode, sizeof(Route));

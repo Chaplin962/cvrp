@@ -2,10 +2,10 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
-#define NUM_THREADS 1024
+#define NUM_THREADS 256
 #define BLOCKS 1024
 
-__global__ void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
+__global__ void LocalSearch::run(Individual *indiv, double penaltyCapacityLS, double penaltyDurationLS)
 {
 	this->penaltyCapacityLS = penaltyCapacityLS;
 	this->penaltyDurationLS = penaltyDurationLS;
