@@ -1179,99 +1179,115 @@ Genetic::Genetic(Params &params) : params(params),
                                    population(params, this->split, this->localSearch),
                                    offspring(params) {}
 
-void LocalSearch::run(Individual & indiv, double penaltyCapacityLS, double penaltyDurationLS)
+void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
 {
-	this->penaltyCapacityLS = penaltyCapacityLS;
-	this->penaltyDurationLS = penaltyDurationLS;
-	loadIndividual(indiv);
+    this->penaltyCapacityLS = penaltyCapacityLS;
+    this->penaltyDurationLS = penaltyDurationLS;
+    loadIndividual(indiv);
 
-	// Shuffling the order of the nodes explored by the LS to allow for more diversity in the search
-	std::shuffle(orderNodes.begin(), orderNodes.end(), params.ran);
-	std::shuffle(orderRoutes.begin(), orderRoutes.end(), params.ran);
-	for (int i = 1; i <= params.nbClients; i++)
-		if (params.ran() % params.ap.nbGranular == 0)  // O(n/nbGranular) calls to the inner function on average, to achieve linear-time complexity overall
-			std::shuffle(params.correlatedVertices[i].begin(), params.correlatedVertices[i].end(), params.ran);
+    // Shuffling the order of the nodes explored by the LS to allow for more diversity in the search
+    std::shuffle(orderNodes.begin(), orderNodes.end(), params.ran);
+    std::shuffle(orderRoutes.begin(), orderRoutes.end(), params.ran);
+    for (int i = 1; i <= params.nbClients; i++)
+        if (params.ran() % params.ap.nbGranular == 0) // O(n/nbGranular) calls to the inner function on average, to achieve linear-time complexity overall
+            std::shuffle(params.correlatedVertices[i].begin(), params.correlatedVertices[i].end(), params.ran);
 
-	searchCompleted = false;
-	for (loopID = 0; !searchCompleted; loopID++)
-	{
-		if (loopID > 1) // Allows at least two loops since some moves involving empty routes are not checked at the first loop
-			searchCompleted = true;
+    searchCompleted = false;
+    for (loopID = 0; !searchCompleted; loopID++)
+    {
+        if (loopID > 1) // Allows at least two loops since some moves involving empty routes are not checked at the first loop
+            searchCompleted = true;
 
-		/* CLASSICAL ROUTE IMPROVEMENT (RI) MOVES SUBJECT TO A PROXIMITY RESTRICTION */
-		for (int posU = 0; posU < params.nbClients; posU++)
-		{
-			nodeU = &clients[orderNodes[posU]];
-			int lastTestRINodeU = nodeU->whenLastTestedRI;
-			nodeU->whenLastTestedRI = nbMoves;
-			for (int posV = 0; posV < (int)params.correlatedVertices[nodeU->cour].size(); posV++)
-			{
-				nodeV = &clients[params.correlatedVertices[nodeU->cour][posV]];
-				if (loopID == 0 || std::max<int>(nodeU->route->whenLastModified, nodeV->route->whenLastModified) > lastTestRINodeU) // only evaluate moves involving routes that have been modified since last move evaluations for nodeU
-				{
-					// Randomizing the order of the neighborhoods within this loop does not matter much as we are already randomizing the order of the node pairs (and it's not very common to find improving moves of different types for the same node pair)
-					setLocalVariablesRouteU();
-					setLocalVariablesRouteV();
-					if (move1()) continue; // RELOCATE
-					if (move2()) continue; // RELOCATE
-					if (move3()) continue; // RELOCATE
-					if (nodeUIndex <= nodeVIndex && move4()) continue; // SWAP
-					if (move5()) continue; // SWAP
-					if (nodeUIndex <= nodeVIndex && move6()) continue; // SWAP
-					if (intraRouteMove && move7()) continue; // 2-OPT
-					if (!intraRouteMove && move8()) continue; // 2-OPT*
-					if (!intraRouteMove && move9()) continue; // 2-OPT*
+        /* CLASSICAL ROUTE IMPROVEMENT (RI) MOVES SUBJECT TO A PROXIMITY RESTRICTION */
+        for (int posU = 0; posU < params.nbClients; posU++)
+        {
+            nodeU = &clients[orderNodes[posU]];
+            int lastTestRINodeU = nodeU->whenLastTestedRI;
+            nodeU->whenLastTestedRI = nbMoves;
+            for (int posV = 0; posV < (int)params.correlatedVertices[nodeU->cour].size(); posV++)
+            {
+                nodeV = &clients[params.correlatedVertices[nodeU->cour][posV]];
+                if (loopID == 0 || std::max<int>(nodeU->route->whenLastModified, nodeV->route->whenLastModified) > lastTestRINodeU) // only evaluate moves involving routes that have been modified since last move evaluations for nodeU
+                {
+                    // Randomizing the order of the neighborhoods within this loop does not matter much as we are already randomizing the order of the node pairs (and it's not very common to find improving moves of different types for the same node pair)
+                    setLocalVariablesRouteU();
+                    setLocalVariablesRouteV();
+                    if (move1())
+                        continue; // RELOCATE
+                    if (move2())
+                        continue; // RELOCATE
+                    if (move3())
+                        continue; // RELOCATE
+                    if (nodeUIndex <= nodeVIndex && move4())
+                        continue; // SWAP
+                    if (move5())
+                        continue; // SWAP
+                    if (nodeUIndex <= nodeVIndex && move6())
+                        continue; // SWAP
+                    if (intraRouteMove && move7())
+                        continue; // 2-OPT
+                    if (!intraRouteMove && move8())
+                        continue; // 2-OPT*
+                    if (!intraRouteMove && move9())
+                        continue; // 2-OPT*
 
-					// Trying moves that insert nodeU directly after the depot
-					if (nodeV->prev->isDepot)
-					{
-						nodeV = nodeV->prev;
-						setLocalVariablesRouteV();
-						if (move1()) continue; // RELOCATE
-						if (move2()) continue; // RELOCATE
-						if (move3()) continue; // RELOCATE
-						if (!intraRouteMove && move8()) continue; // 2-OPT*
-						if (!intraRouteMove && move9()) continue; // 2-OPT*
-					}
-				}
-			}
+                    // Trying moves that insert nodeU directly after the depot
+                    if (nodeV->prev->isDepot)
+                    {
+                        nodeV = nodeV->prev;
+                        setLocalVariablesRouteV();
+                        if (move1())
+                            continue; // RELOCATE
+                        if (move2())
+                            continue; // RELOCATE
+                        if (move3())
+                            continue; // RELOCATE
+                        if (!intraRouteMove && move8())
+                            continue; // 2-OPT*
+                        if (!intraRouteMove && move9())
+                            continue; // 2-OPT*
+                    }
+                }
+            }
 
-			/* MOVES INVOLVING AN EMPTY ROUTE -- NOT TESTED IN THE FIRST LOOP TO AVOID INCREASING TOO MUCH THE FLEET SIZE */
-			if (loopID > 0 && !emptyRoutes.empty())
-			{
-				nodeV = routes[*emptyRoutes.begin()].depot;
-				setLocalVariablesRouteU();
-				setLocalVariablesRouteV();
-				if (move1()) continue; // RELOCATE
-				if (move2()) continue; // RELOCATE
-				if (move3()) continue; // RELOCATE
-				if (move9()) continue; // 2-OPT*
-			}
-		}
+            /* MOVES INVOLVING AN EMPTY ROUTE -- NOT TESTED IN THE FIRST LOOP TO AVOID INCREASING TOO MUCH THE FLEET SIZE */
+            if (loopID > 0 && !emptyRoutes.empty())
+            {
+                nodeV = routes[*emptyRoutes.begin()].depot;
+                setLocalVariablesRouteU();
+                setLocalVariablesRouteV();
+                if (move1())
+                    continue; // RELOCATE
+                if (move2())
+                    continue; // RELOCATE
+                if (move3())
+                    continue; // RELOCATE
+                if (move9())
+                    continue; // 2-OPT*
+            }
+        }
 
-		if (params.ap.useSwapStar == 1 && params.areCoordinatesProvided)
-		{
-			/* (SWAP*) MOVES LIMITED TO ROUTE PAIRS WHOSE CIRCLE SECTORS OVERLAP */
-			for (int rU = 0; rU < params.nbVehicles; rU++)
-			{
-				routeU = &routes[orderRoutes[rU]];
-				int lastTestSWAPStarRouteU = routeU->whenLastTestedSWAPStar;
-				routeU->whenLastTestedSWAPStar = nbMoves;
-				for (int rV = 0; rV < params.nbVehicles; rV++)
-				{
-					routeV = &routes[orderRoutes[rV]];
-					if (routeU->nbCustomers > 0 && routeV->nbCustomers > 0 && routeU->cour < routeV->cour
-						&& (loopID == 0 || std::max<int>(routeU->whenLastModified, routeV->whenLastModified)
-							> lastTestSWAPStarRouteU))
-						if (CircleSector::overlap(routeU->sector, routeV->sector))
-							swapStar();
-				}
-			}
-		}
-	}
+        if (params.ap.useSwapStar == 1 && params.areCoordinatesProvided)
+        {
+            /* (SWAP*) MOVES LIMITED TO ROUTE PAIRS WHOSE CIRCLE SECTORS OVERLAP */
+            for (int rU = 0; rU < params.nbVehicles; rU++)
+            {
+                routeU = &routes[orderRoutes[rU]];
+                int lastTestSWAPStarRouteU = routeU->whenLastTestedSWAPStar;
+                routeU->whenLastTestedSWAPStar = nbMoves;
+                for (int rV = 0; rV < params.nbVehicles; rV++)
+                {
+                    routeV = &routes[orderRoutes[rV]];
+                    if (routeU->nbCustomers > 0 && routeV->nbCustomers > 0 && routeU->cour < routeV->cour && (loopID == 0 || std::max<int>(routeU->whenLastModified, routeV->whenLastModified) > lastTestSWAPStarRouteU))
+                        if (CircleSector::overlap(routeU->sector, routeV->sector))
+                            swapStar();
+                }
+            }
+        }
+    }
 
-	// Register the solution produced by the LS in the individual
-	exportIndividual(indiv);
+    // Register the solution produced by the LS in the individual
+    exportIndividual(indiv);
 }
 
 void LocalSearch::setLocalVariablesRouteU()
@@ -1838,10 +1854,11 @@ struct Client
     int polarAngle;			// Polar angle of the client around the depot, measured in degrees and truncated for convenience
 };*/
 
+//[edit] parallelizing while loop
 __global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynode, int myplace, double myload, double mytime, double myReversalDistance, double cumulatedX, double cumulatedY, bool firstIt, double *params_cli[], double *params_timeCost[], double *parallel_coordX[], double *parallel_coordY[], int *parallel_polarAngle[])
 {
 
-    int tid = blockIdx.x *blockDim.x + threadIdx.x;
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (!mynode->isDepot || firstIt && tid < BLOCKS * NUM_THREADS)
     {
@@ -1855,13 +1872,13 @@ __global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynod
         mynode->cumulatedTime = mytime;
         mynode->cumulatedReversalDistance = myReversalDistance;
 
-        firstIt = false;
-
         if (!mynode->isDepot)
         {
             cumulatedX += (*parallel_coordX)[mynode->cour];
             cumulatedY += (*parallel_coordY)[mynode->cour];
         }
+
+        firstIt = false;
     }
 }
 
@@ -1873,7 +1890,7 @@ void LocalSearch::updateRouteData(Route *myRoute)
     double myReversalDistance = 0.;
     double cumulatedX = 0.;
     double cumulatedY = 0.;
-
+//[edit initialization of parallel variables]
     Node *mynode = myRoute->depot, *mynode2 = myRoute->depot;
     mynode->position = 0;
     mynode2->position = 0;
@@ -1939,9 +1956,14 @@ void LocalSearch::updateRouteData(Route *myRoute)
     while (!mynode->isDepot || firstIt)
     {
         mynode = mynode->next;
+        cudaMemcpy(parallel_mynode, mynode, sizeof(Route), cudaMemcpyDeviceToHost);
         updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timeCost, parallel_coordX, parallel_coordY, parallel_polarAngle);
 
         cudaMemcpy(parallel_polarAngle, polarAngle, count * sizeof(int), cudaMemcpyDeviceToHost);
+
+        (params.cli[mynode->cour].coordX) = *coordX[mynode->cour];
+        (params.cli[mynode->cour].coordY) = *coordY[mynode->cour];
+        (params.cli[mynode->cour].polarAngle) = *polarAngle[mynode->cour];
 
         if (!mynode->isDepot)
         {
@@ -1951,6 +1973,7 @@ void LocalSearch::updateRouteData(Route *myRoute)
                 myRoute->sector.extend((*polarAngle)[mynode->cour]);
         }
     }
+
     /*
         while (!mynode->isDepot || firstIt)
         {
@@ -2116,7 +2139,7 @@ int main(int argc, char *argv[])
         cudaGetDeviceProperties(&props, 0);
 
         //[edit]checking for gpu capabailities
-        if (params.nbClients < props.maxThreadsDim[0] * props.maxThreadsDim[1] * props.maxThreadsDim[2] * props.maxThreadsPerBlock * 1000) // blocks*threads*1000
+        // if (params.nbClients < props.maxThreadsDim[0] * props.maxThreadsDim[1] * props.maxThreadsDim[2] * props.maxThreadsPerBlock * 1000) // blocks*threads*1000
         // Running HGS
         {
             Genetic solver(params);
@@ -2131,11 +2154,11 @@ int main(int argc, char *argv[])
                 solver.population.exportSearchProgress(commandline.pathSolution + ".PG.csv", commandline.pathInstance);
             }
         }
-        else
-        {
-            cout << "Cannot use CUDA due to limitaions (more than 1000 clients per thread)";
-            return 0;
-        }
+        // else
+        // {
+        //     cout << "\nCannot use CUDA due to limitaions (more than 1000 clients per thread)";
+        //     return 0;
+        // }
     }
     catch (const string &e)
     {
