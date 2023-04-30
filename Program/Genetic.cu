@@ -96,7 +96,7 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
 			j++;
 		}
 	}
-
+	
 	// Complete the individual with the Split algorithm
 	split.generalSplit(result, parent1.eval.nbRoutes);
 }
