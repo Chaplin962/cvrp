@@ -1880,7 +1880,7 @@ struct Client_kernel
 	int polarAngle;			// Polar angle of the client around the depot, measured in degrees and truncated for convenience
 };
 
-__global__ void updateRouteData_kernel(Route *myRoute,Node *mynode,int myplace,double myload,double mytime,double myReversalDistance,double cumulatedX,double cumulatedY,bool firstIt,vector<Client> *params_cli,vector<vector<double>> *params_timeCost){
+__global__ void updateRouteData_kernel(Route *myRoute,Node *mynode,int myplace,double myload,double mytime,double myReversalDistance,double cumulatedX,double cumulatedY,bool firstIt,vector<Client> params_cli,const vector<vector<double>> params_timeCost){
 	
 	int tid = threadIdx.x + blockIdx.x * blockDim.x;
 	
@@ -1927,35 +1927,54 @@ void LocalSearch::updateRouteData(Route *myRoute)
 
 	Route *parallel_myRoute;
 	Node *parallel_mynode;
-	vector<Client> *params_cli;
-	vector<vector<double>> *params_timeCost;
+	// vector<Client> params_cli;
+	// const vector<vector<double>> &params_timeCost;
 
-	vector<Client> *params_cli2;
-	vector<vector<double>> *params_timeCost2;
+	vector<Client> params_cli2;
+	const vector<vector<double>> &params_timeCost2 = params.timeCost;
 	
-	int count=0;
+	int count=params.cli.size();
+	int count1=0;
 
 	/*
 	params_cli2->insert(params_cli2->begin(), params.cli.begin(), params.cli.end());
 	params_timeCost2->insert(params_timeCost2->begin(), params.timeCost.begin(), params.timeCost.end());
 	*/
-	
-	while (!mynode->isDepot || firstIt)
+	params_cli2.insert(params_cli2.begin(), params.cli.begin(), params.cli.end());
+	//params_timeCost2=params.timeCost;
+	//params_timeCost2.insert(params_timeCost2.begin(), params.timeCost.begin(), params.timeCost.end());
+	/*while (!mynode->isDepot || firstIt)
 	{
 		params_cli2[count].demand.push_back(params.cli[mynode->cour].demand);
 		params_timeCost2[count].push_back(params.timeCost[mynode->prev->cour][mynode->cour]);
 		count++;
-	}
+	}*/
 
+	// for(int i1=0;i1<params.cli.size();i1++){
+	// 	params_cli2[i1].push_back(params.cli[i1]);
+
+	// 	// params_cli2[i1].demand=params.cli[i1].demand;
+	// 	// params_cli2[i1].serviceDuration=params.cli[i1].serviceDuration;
+	// 	// params_cli2[i1].coordX=params.cli[i1].coordX;
+	// 	// params_cli2[i1].coordY=params.cli[i1].coordY;
+	// 	// params_cli2[i1].polarAngle=params.cli[i1].polarAngle;
+	// }
+
+	// for(int i1=0;i1<params.timeCost.size();i1++){
+	// 	params_timeCost2.push_back(params.timeCost[i1]);
+	// 	count1+=params.timeCost[i1].size();
+	// }
+	double *params_cli;
+	double *params_timeCost;
 	cudaMalloc((void **)&parallel_myRoute, sizeof(Route));
 	cudaMalloc((void **)&parallel_mynode, sizeof(Route));
 	cudaMalloc((void **)&params_cli, count*sizeof(Client));
-	cudaMalloc((void **)&params_timeCost, count*sizeof(double));
+	cudaMalloc((void **)&params_timeCost, count1*sizeof(double));
 
 	cudaMemcpy(parallel_myRoute, myRoute, sizeof(Route), cudaMemcpyHostToDevice);
 	cudaMemcpy(parallel_mynode, mynode, sizeof(Route), cudaMemcpyHostToDevice);
-	cudaMemcpy(params_cli, params_cli2, count*sizeof(Client), cudaMemcpyHostToDevice);
-	cudaMemcpy(params_timeCost, params_timeCost2, count*sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(&params_cli, &params_cli2, count*sizeof(Client), cudaMemcpyHostToDevice);
+	cudaMemcpy(&params_timeCost, &params_timeCost2, count1*sizeof(double), cudaMemcpyHostToDevice);
 
 	updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli2, params_timeCost2);
 
