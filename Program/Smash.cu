@@ -1880,20 +1880,20 @@ __global__ void updateRouteData_kernel(Route *myRoute,Node *mynode,int myplace,d
 		mynode = mynode->next;
 		myplace++;
 		mynode->position = myplace;
-		myload += params_cli[mynode->cour][0];
-		mytime += params_timeCost[mynode->prev->cour][mynode->cour] + params_cli[mynode->cour][1];
-		myReversalDistance += params_timeCost[mynode->cour][mynode->prev->cour] - params_timeCost[mynode->prev->cour][mynode->cour];
+		myload += params_cli[mynode->cour*5+0];
+		mytime += /*params_timeCost[mynode->prev->cour][mynode->cour] + */params_cli[mynode->cour*5+1];
+		myReversalDistance += /*params_timeCost[mynode->cour][mynode->prev->cour] - params_timeCost[mynode->prev->cour][mynode->cour]*/1;
 		mynode->cumulatedLoad = myload;
 		mynode->cumulatedTime = mytime;
 		mynode->cumulatedReversalDistance = myReversalDistance;
 		if (!mynode->isDepot)
 		{
-			cumulatedX += params_cli[mynode->cour][2];
-			cumulatedY += params_cli[mynode->cour][3];
+			cumulatedX += params_cli[mynode->cour*5+2];
+			cumulatedY += params_cli[mynode->cour*5+3];
 			if (firstIt)
-				myRoute->sector.initialize(params_cli[mynode->cour][4]);
+				myRoute->sector.initialize(params_cli[mynode->cour*5+4]);
 			else
-				myRoute->sector.extend(params_cli[mynode->cour][4]);
+				myRoute->sector.extend(params_cli[mynode->cour*5+4]);
 		}
 		firstIt = false;
 	}
@@ -1920,8 +1920,7 @@ void LocalSearch::updateRouteData(Route *myRoute)
 	Node *parallel_mynode;
 	double *params_cli;
 	double *params_timeCost;
-	double params_cli2;
-	double params_timeCost2;
+	
 
 	// vector<Client> params_cli2;
 	// const vector<vector<double>> &params_timeCost2 = params.timeCost;
@@ -1943,14 +1942,23 @@ void LocalSearch::updateRouteData(Route *myRoute)
 		count++;
 	}*/
 
-	for(int i1=0;i1<params.cli.size()*6;i1++){
-		//params_cli2[i1]=params.cli[i1];
+	for(int i1=0;i1<params.timeCost.size();i1++){
+		for(int i2=0;i2<params.timeCost[i1].size();i2++){
+			count1+=1;
+		}
+	}
 
-		params_cli2[i1*5]=params.cli[i1].demand;
+	double params_cli2[params.cli.size()*5];
+	double params_timeCost2[count1];
+
+	count1=0;
+
+	for(int i1=0;i1<params.cli.size()*5;i1++){
+		params_cli2[(i1*5)]=params.cli[i1].demand;
 		params_cli2[(i1*5)+1]=params.cli[i1].serviceDuration;
 		params_cli2[(i1*5)+2]=params.cli[i1].coordX;
 		params_cli2[(i1*5)+3]=params.cli[i1].coordY;
-		params_cli2[(i1*5)+4]=params.cli[i1].polarAngle;
+		params_cli2[(i1*5)+4]=(double)params.cli[i1].polarAngle;
 	}
 
 	for(int i1=0;i1<params.timeCost.size();i1++){
