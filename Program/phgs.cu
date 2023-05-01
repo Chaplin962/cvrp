@@ -1,9 +1,7 @@
-//
-// Created by chkwon on 3/23/22.
-//
-
 #include "AlgorithmParameters.h"
 #include <iostream>
+#define NUM_THREADS 1024
+#define BLOCKS 1024
 
 extern "C" struct AlgorithmParameters default_algorithm_parameters()
 {
@@ -105,6 +103,24 @@ Solution *prepare_solution(Population &population, Params &params)
     return sol;
 }
 
+__global__ void solve_cvrp_kernel(int divisions, int n, double *distance_matrix, double *x_coords, double *y_coords, char isRoundingInteger)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    for (int k = 0; k <= divisions && (tid * divisions + k) < n; k++)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            for (int j = 0; j < n; j++)
+            {
+                distance_matrix[i * n + j] = std::sqrt(
+                    (x_coords[i] - x_coords[j]) * (x_coords[i] - x_coords[j]) + (y_coords[i] - y_coords[j]) * (y_coords[i] - y_coords[j]));
+                if (isRoundingInteger)
+                    distance_matrix[i * n + j] = std::round(distance_matrix[i * n + j]);
+            }
+        }
+    }
+}
+
 extern "C" Solution *solve_cvrp(
     int n, double *x, double *y, double *serv_time, double *dem,
     double vehicleCapacity, double durationLimit, char isRoundingInteger, char isDurationConstraint,
@@ -121,16 +137,63 @@ extern "C" Solution *solve_cvrp(
 
         std::vector<std::vector<double>> distance_matrix(n, std::vector<double>(n));
         // bookmarkimp
+
+        double *distance_matrix2 = (double *)malloc(sizeof(double) * n * n), *x_coords2 = (double *)malloc(sizeof(double) * n), *y_coords2 = (double *)malloc(sizeof(double) * n);
+        double *parallel_distance_matrix, *parallel_x_coords, *parallel_y_coords;
+
         for (int i = 0; i < n; i++)
         {
             for (int j = 0; j < n; j++)
             {
-                distance_matrix[i][j] = std::sqrt(
-                    (x_coords[i] - x_coords[j]) * (x_coords[i] - x_coords[j]) + (y_coords[i] - y_coords[j]) * (y_coords[i] - y_coords[j]));
-                if (isRoundingInteger)
-                    distance_matrix[i][j] = std::round(distance_matrix[i][j]);
+                distance_matrix2[i * n + j] = distance_matrix[i][j];
+            }
+            y_coords2[i] = y_coords[i];
+            x_coords2[i] = x_coords[i];
+        }
+
+        cudaMalloc((void **)&parallel_distance_matrix, n * n * sizeof(double));
+        cudaMalloc((void **)&parallel_x_coords, n * sizeof(double));
+        cudaMalloc((void **)&parallel_y_coords, n * sizeof(double));
+
+        cudaMemcpy(parallel_distance_matrix, distance_matrix2, n * n * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(parallel_x_coords, x_coords2, n * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(parallel_y_coords, y_coords2, n * sizeof(double), cudaMemcpyHostToDevice);
+
+        int divisions = (n / BLOCKS) / NUM_THREADS;
+
+        if (divisions == 0)
+        {
+            divisions++;
+        }
+
+        solve_cvrp_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, n, parallel_distance_matrix, parallel_x_coords, parallel_y_coords, isRoundingInteger);
+
+        cudaMemcpy(parallel_distance_matrix, distance_matrix2, n * n * sizeof(double), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < n; i++)
+        {
+            for (int j = 0; j < n; j++)
+            {
+                distance_matrix[i][j] = distance_matrix2[i * n + j];
             }
         }
+
+        free(distance_matrix2);
+        free(x_coords2);
+        free(y_coords2);
+        cudaFree(parallel_distance_matrix);
+        cudaFree(parallel_x_coords);
+        cudaFree(parallel_y_coords);
+
+        // for (int i = 0; i < n; i++)
+        // {
+        //     for (int j = 0; j < n; j++)
+        //     {
+        //         distance_matrix[i][j] = std::sqrt(
+        //             (x_coords[i] - x_coords[j]) * (x_coords[i] - x_coords[j]) + (y_coords[i] - y_coords[j]) * (y_coords[i] - y_coords[j]));
+        //         if (isRoundingInteger)
+        //             distance_matrix[i][j] = std::round(distance_matrix[i][j]);
+        //     }
+        // }
 
         Params params(x_coords, y_coords, distance_matrix, service_time, demands, vehicleCapacity, durationLimit, max_nbVeh, isDurationConstraint, verbose, *ap);
 
@@ -209,8 +272,6 @@ extern "C" void delete_solution(Solution *sol)
 }
 
 #include "Genetic.h"
-#define NUM_THREADS 1024
-#define BLOCKS 1024
 
 void Genetic::run()
 {
@@ -338,8 +399,8 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
 
     crossoverOX_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, params.nbClients, parallel_freqClient, parallel_parent2ChromT, end, parallel_resultChromT, j);
 
-    cudaMemcpy(parallel_freqClient, freqClient2, count * sizeof(bool), cudaMemcpyDeviceToHost);
-    cudaMemcpy(parallel_parent2ChromT, parent2ChromT2, count * sizeof(Individual), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(parallel_freqClient, freqClient2, count * sizeof(bool), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(parallel_parent2ChromT, parent2ChromT2, count * sizeof(Individual), cudaMemcpyDeviceToHost);
     cudaMemcpy(parallel_resultChromT, resultChromT2, count * sizeof(Individual), cudaMemcpyDeviceToHost);
 
     j = j2;
@@ -363,7 +424,12 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     //     j++;
     // }
     // }
-
+    free(freqClient2);
+    free(parent2ChromT2);
+    free(resultChromT2);
+    cudaFree(parallel_freqClient);
+    cudaFree(parallel_parent2ChromT);
+    cudaFree(parallel_resultChromT);
     // Complete the individual with the Split algorithm
     split.generalSplit(result, parent1.eval.nbRoutes);
 }
