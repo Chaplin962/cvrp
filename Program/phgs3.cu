@@ -1713,6 +1713,11 @@ void Population::restart()
     generatePopulation();
 }
 
+__global__ void managePenalties_kernel(int infeasible_subpopsize, int params_penaltyCapacity, int params_penaltyDuration, double *infeasiblesubpop_evalpenalcost, double *infeasiblesubpop_evaldist, double *infeasiblesubpop_evalcapexcess, double *infeasiblesubpop_evaldurexcess)
+{
+
+}
+
 void Population::managePenalties()
 {
     // Setting some bounds [0.1,100000] to the penalty values for safety
@@ -1740,6 +1745,8 @@ void Population::managePenalties()
     cudaMalloc((void **)&infeasiblesubpop_evaldist, infeasible_subpopsize*sizeof(int));
     cudaMalloc((void **)&infeasiblesubpop_evalcapexcess, infeasible_subpopsize*sizeof(int));
     cudaMalloc((void **)&infeasiblesubpop_evaldurexcess, infeasible_subpopsize*sizeof(int));
+
+    managePenalties_kernel<<<BLOCKS, NUM_THREADS>>>(infeasible_subpopsize, params_penaltyCapacity, params_penaltyDuration, infeasiblesubpop_evalpenalcost, infeasiblesubpop_evaldist, infeasiblesubpop_evalcapexcess, infeasiblesubpop_evaldurexcess);
 
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
         infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
