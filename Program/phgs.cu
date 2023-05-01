@@ -257,14 +257,14 @@ void Genetic::run()
         std::cout << "----- GENETIC ALGORITHM FINISHED AFTER " << nbIter << " ITERATIONS. TIME SPENT: " << (double)(clock() - params.startTime) / (double)CLOCKS_PER_SEC << std::endl;
 }
 
-__global__ void crossoverOX_kernel(int nbClients, bool *freqClient[], Individual *parent2, int end, Individual &result, int j)
+__global__ void crossoverOX_kernel(int nbClients, bool *freqClient, int *parent2ChromT, int end, int *resultChromT, int j)
 {
     for (int i = 1; i <= nbClients; i++)
     {
-        int temp = parent2->chromT[(end + i) % nbClients];
+        int temp = parent2ChromT[(end + i) % nbClients];
         if (freqClient[temp] == false)
         {
-            result.chromT[j % nbClients] = temp;
+            resultChromT[j % nbClients] = temp;
             j++;
         }
     }
@@ -296,41 +296,55 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     //[bookmark]
     // Fill the remaining elements in the order given by the second parent
 
-    Params *params2;
-    bool *freqClient2;
-    Individual *parent22;
-    Individual *result2;
+    bool *freqClient2 = (bool *)malloc(sizeof(bool) * params.nbClients);
+    int *parent2ChromT2 = (int *)malloc(sizeof(int) * params.nbClients);
+    int *resultChromT2 = (int *)malloc(sizeof(int) * params.nbClients);
 
-    Params *parallel_params;
     bool *parallel_freqClient;
-    Individual *parallel_parent2;
-    Individual *parallel_result;
+    int *parallel_parent2ChromT;
+    int *parallel_resultChromT;
 
     int count = 0;
     for (int i = 1; i <= params.nbClients; i++)
     {
         count++;
-        parent22->chromT[(end + i) % params.nbClients] = parent2.chromT[(end + i) % params.nbClients];
+        parent2ChromT2[(end + i) % params.nbClients] = parent2.chromT[(end + i) % params.nbClients];
         freqClient2[parent2.chromT[(end + i) % params.nbClients]] = freqClient[parent2.chromT[(end + i) % params.nbClients]];
         {
-            result2->chromT[j % params.nbClients] = result.chromT[j % params.nbClients];
+            resultChromT2[j % params.nbClients] = result.chromT[j % params.nbClients];
             j++;
         }
     }
 
     j = j2;
 
-    cudaMalloc((void **)&parallel_params, count * sizeof(Params));
     cudaMalloc((void **)&parallel_freqClient, count * sizeof(bool));
-    cudaMalloc((void **)&parallel_parent2, count * sizeof(Individual));
-    cudaMalloc((void **)&parallel_result, count * sizeof(Individual));
+    cudaMalloc((void **)&parallel_parent2ChromT, count * sizeof(Individual));
+    cudaMalloc((void **)&parallel_resultChromT, count * sizeof(Individual));
 
-    cudaMemcpy(parallel_params, params2, count * sizeof(Params), cudaMemcpyHostToDevice);
     cudaMemcpy(parallel_freqClient, freqClient2, count * sizeof(bool), cudaMemcpyHostToDevice);
-    cudaMemcpy(parallel_parent2, parent22, count * sizeof(Individual), cudaMemcpyHostToDevice);
-    cudaMemcpy(parallel_result, result2, count * sizeof(Individual), cudaMemcpyHostToDevice);
+    cudaMemcpy(parallel_parent2ChromT, parent2ChromT2, count * sizeof(Individual), cudaMemcpyHostToDevice);
+    cudaMemcpy(parallel_resultChromT, resultChromT2, count * sizeof(Individual), cudaMemcpyHostToDevice);
 
-    crossoverOX_kernel<<<BLOCKS, NUM_THREADS>>>(params.nbClients, parallel_freqClient, parallel_parent2, end, result, j);
+    int divisions = (params.nbClients/BLOCKS)/ NUM_THREADS;
+    crossoverOX_kernel<<<BLOCKS, NUM_THREADS>>>(params.nbClients, parallel_freqClient, parallel_parent2ChromT, end, parallel_resultChromT, j);
+
+    cudaMemcpy(parallel_freqClient, freqClient2, count * sizeof(bool), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parallel_parent2ChromT, parent2ChromT2, count * sizeof(Individual), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parallel_resultChromT, resultChromT2, count * sizeof(Individual), cudaMemcpyDeviceToHost);
+   
+    j = j2;
+   
+    for (int i = 1; i <= params.nbClients; i++)
+    {
+    int temp = parent2.chromT[(end + i) % params.nbClients];
+    if (freqClient[temp] == false)
+    {
+        result.chromT[j % params.nbClients] = resultChromT2[j % params.nbClients];
+        j++;
+    }
+    }
+
     // for (int i = 1; i <= params.nbClients; i++)
     // {
     // int temp = parent2.chromT[(end + i) % params.nbClients];
