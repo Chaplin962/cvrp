@@ -1746,8 +1746,6 @@ void Population::managePenalties()
     int params_penaltyCapacity = params.penaltyCapacity;
     int params_penaltyDuration = params.penaltyDuration;
 
-
-
     cudaMalloc((void **)&infeasiblesubpop_evalpenalcost, infeasible_subpopsize*sizeof(int));
     cudaMalloc((void **)&infeasiblesubpop_evaldist, infeasible_subpopsize*sizeof(int));
     cudaMalloc((void **)&infeasiblesubpop_evalcapexcess, infeasible_subpopsize*sizeof(int));
