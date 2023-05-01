@@ -260,12 +260,11 @@ void Genetic::run()
         std::cout << "----- GENETIC ALGORITHM FINISHED AFTER " << nbIter << " ITERATIONS. TIME SPENT: " << (double)(clock() - params.startTime) / (double)CLOCKS_PER_SEC << std::endl;
 }
 
-__global__ void crossoverOX_kernel(int divisions, int nbClients, bool *freqClient, int *parent2ChromT, int end, int *resultChromT, int j)
+__global__ void crossoverOX_kernel(int nbClients, bool *freqClient, int *parent2ChromT, int end, int *resultChromT, int j)
 {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int i = 0; i <= divisions && (tid * divisions + i) < nbClients; i++)
+    for (int i = 1; i <= nbClients; i++)
     {
-        int temp = parent2ChromT[(end + tid * divisions + i) % nbClients];
+        int temp = parent2ChromT[(end + i) % nbClients];
         if (freqClient[temp] == false)
         {
             resultChromT[j % nbClients] = temp;
@@ -331,12 +330,7 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     cudaMemcpy(parallel_resultChromT, resultChromT2, count * sizeof(Individual), cudaMemcpyHostToDevice);
 
     int divisions = (params.nbClients / BLOCKS) / NUM_THREADS;
-    if (divisions == 0)
-    {
-        divisions++;
-    }
-
-    crossoverOX_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, params.nbClients, parallel_freqClient, parallel_parent2ChromT, end, parallel_resultChromT, j);
+    crossoverOX_kernel<<<BLOCKS, NUM_THREADS>>>(params.nbClients, parallel_freqClient, parallel_parent2ChromT, end, parallel_resultChromT, j);
 
     cudaMemcpy(parallel_freqClient, freqClient2, count * sizeof(bool), cudaMemcpyDeviceToHost);
     cudaMemcpy(parallel_parent2ChromT, parent2ChromT2, count * sizeof(Individual), cudaMemcpyDeviceToHost);
@@ -1601,17 +1595,18 @@ bool Population::addIndividual(const Individual &indiv, bool updateFeasible)
         return false;
 }
 
-__global__ void updateBiasedFitnesses_kernel(int divisions, int pop_size, int *ranking_second, int params_ap_nbElite, double *pop_ranking_second_biasedFitness)
+__global__ void updateBiasedFitnesses_kernel(int pop_size, int *ranking_second, int params_ap_nbElite, double *pop_ranking_second_biasedFitness)
 {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int i = 0; i <= divisions && (tid * divisions + i) < (int)pop_size; i++)
+    int tid = threadIdx.x;
+
+    if (tid < (int)pop_size)
     {
-        double divRank = (double)tid * divisions + i / (double)(pop_size - 1); // Ranking from 0 to 1
-        double fitRank = (double)ranking_second[tid * divisions + i] / (double)(pop_size - 1);
+        double divRank = (double)tid / (double)(pop_size - 1); // Ranking from 0 to 1
+        double fitRank = (double)ranking_second[tid] / (double)(pop_size - 1);
         if ((int)pop_size <= params_ap_nbElite) // Elite individuals cannot be smaller than population size
-            pop_ranking_second_biasedFitness[tid * divisions + i] = fitRank;
+            pop_ranking_second_biasedFitness[tid] = fitRank;
         else
-            pop_ranking_second_biasedFitness[tid * divisions + i] = fitRank + (1.0 - (double)params_ap_nbElite / (double)pop_size) * divRank;
+            pop_ranking_second_biasedFitness[tid] = fitRank + (1.0 - (double)params_ap_nbElite / (double)pop_size) * divRank;
     }
 }
 
@@ -1631,8 +1626,8 @@ void Population::updateBiasedFitnesses(SubPopulation &pop)
         // bookmarkimp
         int pop_size = (int)pop.size();
         int params_ap_nbElite = params.ap.nbElite;
-        int *ranking_second, *ranking_second2 = (int *)malloc(sizeof(int) * pop_size);
-        double *pop_ranking_second_biasedFitness, *pop_ranking_second_biasedFitness2 = (double *)malloc(sizeof(double) * pop_size);
+        int *ranking_second, *ranking_second2=(int *)malloc(sizeof(int) * pop_size);
+        double *pop_ranking_second_biasedFitness, *pop_ranking_second_biasedFitness2=(double *)malloc(sizeof(double) * pop_size);
 
         for (int i = 0; i < pop_size; i++)
         {
@@ -1643,12 +1638,8 @@ void Population::updateBiasedFitnesses(SubPopulation &pop)
         cudaMalloc((void **)&pop_ranking_second_biasedFitness, pop_size * sizeof(int));
 
         cudaMemcpy(ranking_second, ranking_second2, pop_size * sizeof(int), cudaMemcpyHostToDevice);
-        int divisions = (params.nbClients / BLOCKS) / NUM_THREADS;
-        if (divisions == 0)
-        {
-            divisions++;
-        }
-        updateBiasedFitnesses_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, pop_size, ranking_second, params_ap_nbElite, pop_ranking_second_biasedFitness);
+
+        updateBiasedFitnesses_kernel<<<BLOCKS, NUM_THREADS>>>(pop_size, ranking_second, params_ap_nbElite, pop_ranking_second_biasedFitness);
 
         cudaMemcpy(pop_ranking_second_biasedFitness2, pop_ranking_second_biasedFitness, pop_size * sizeof(int), cudaMemcpyDeviceToHost);
 
@@ -1740,6 +1731,16 @@ void Population::managePenalties()
 
     // Update the evaluations
     // bookmarkimp
+    int infeasible_subpopsize=(int) infeasibleSubpop.size();
+    double *infeasiblesubpop_evalpenalcost, *infeasiblesubpop_evaldist, *infeasiblesubpop_evalcapexcess, *infeasiblesubpop_evaldurexcess = (double*)malloc(sizeof(double)*infeasible_subpopsize);
+    int params_penaltyCapacity = params.penaltyCapacity;
+    int params_penaltyDuration = params.penaltyDuration;
+
+    cudaMalloc((void **)&infeasiblesubpop_evalpenalcost, infeasible_subpopsize*sizeof(int));
+    cudaMalloc((void **)&infeasiblesubpop_evaldist, infeasible_subpopsize*sizeof(int));
+    cudaMalloc((void **)&infeasiblesubpop_evalcapexcess, infeasible_subpopsize*sizeof(int));
+    cudaMalloc((void **)&infeasiblesubpop_evaldurexcess, infeasible_subpopsize*sizeof(int));
+
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
         infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
 
