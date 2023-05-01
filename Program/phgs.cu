@@ -105,20 +105,17 @@ Solution *prepare_solution(Population &population, Params &params)
 
 __global__ void solve_cvrp_kernel(int divisions, int n, double *distance_matrix, double *x_coords, double *y_coords, char isRoundingInteger)
 {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int k = 0; k <= divisions && (tid * divisions + k) < n; k++)
+    int tidy = blockIdx.y * blockDim.y + threadIdx.y;
+    int tidx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (tidy >= n || tidx >= n)
     {
-        for (int i = 0; i < n; i++)
-        {
-            for (int j = 0; j < n; j++)
-            {
-                distance_matrix[i * n + j] = std::sqrt(
-                    (x_coords[i] - x_coords[j]) * (x_coords[i] - x_coords[j]) + (y_coords[i] - y_coords[j]) * (y_coords[i] - y_coords[j]));
-                if (isRoundingInteger)
-                    distance_matrix[i * n + j] = std::round(distance_matrix[i * n + j]);
-            }
-        }
+        return;
     }
+    distance_matrix[(tidx * n) + tidy] = std::sqrt(
+        (x_coords[tidx] - x_coords[tidy]) * (x_coords[tidx] - x_coords[tidy]) + (y_coords[tidx] - y_coords[tidy]) * (y_coords[tidx] - y_coords[tidy]));
+    if (isRoundingInteger)
+        distance_matrix[(tidx * n) + tidy] = std::round(distance_matrix[(tidx * n) + tidy]);
 }
 
 extern "C" Solution *solve_cvrp(
@@ -166,7 +163,7 @@ extern "C" Solution *solve_cvrp(
             divisions++;
         }
 
-        solve_cvrp_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, n, parallel_distance_matrix, parallel_x_coords, parallel_y_coords, isRoundingInteger);
+        solve_cvrp_kernel<<<n, n>>>(divisions, n, parallel_distance_matrix, parallel_x_coords, parallel_y_coords, isRoundingInteger);
 
         cudaMemcpy(parallel_distance_matrix, distance_matrix2, n * n * sizeof(double), cudaMemcpyDeviceToHost);
         for (int i = 0; i < n; i++)
@@ -610,7 +607,7 @@ InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInte
         }
 
         // Calculating 2D Euclidean Distance
-        //bookmarkimp2
+        // bookmarkimp2
         dist_mtx = std::vector<std::vector<double>>(nbClients + 1, std::vector<double>(nbClients + 1));
         for (int i = 0; i <= nbClients; i++)
         {

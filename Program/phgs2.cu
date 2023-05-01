@@ -107,19 +107,22 @@ Solution *prepare_solution(Population &population, Params &params)
     return sol;
 }
 
-__global__ void solve_cvrp_kernel(int n, char isRoundingInteger, double x_coords_kernel, double y_coords_kernel, double *distance_matrix_kernel){
+__global__ void solve_cvrp_kernel(int n, char isRoundingInteger, double x_coords_kernel, double y_coords_kernel, double *distance_matrix_kernel)
+{
 
-    int tidy= blockIdx.y * blockDim.y + threadIdx.y;
-    int tidx= blockIdx.x * blockDim.x + threadIdx.x;
+    int tidy = blockIdx.y * blockDim.y + threadIdx.y;
+    int tidx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (tidy >= n || tidx>=n){
+    if (tidy >= n || tidx >= n)
+    {
         return;
     }
-    distance_matrix_kernel[(tidy*n)+tidx] = std::sqrt(
+
+    distance_matrix_kernel[(tidy * n) + tidx] = std::sqrt(
         (x_coords_kernel[tidy] - x_coords_kernel[tidx]) * (x_coords_kernel[tidy] - x_coords_kernel[tidx]) + (y_coords_kernel[tidy] - y_coords_kernel[tidx]) * (y_coords_kernel[tidy] - y_coords_kernel[tidx]));
+    
     if (isRoundingInteger)
-        distance_matrix_kernel[(tidy*n)+tidx] = std::round(distance_matrix_kernel[(tidy*n)+tidx]);
-            
+        distance_matrix_kernel[(tidy * n) + tidx] = std::round(distance_matrix_kernel[(tidy * n) + tidx]);
 }
 
 extern "C" Solution *solve_cvrp(
@@ -139,7 +142,7 @@ extern "C" Solution *solve_cvrp(
         std::vector<std::vector<double>> distance_matrix(n, std::vector<double>(n));
         // bookmarkimp
 
-        double *distance_matrix_kernel[n*n],distance_matrix_kernel2[n*n];
+        double *distance_matrix_kernel[n * n], distance_matrix_kernel2[n * n];
         double x_coords_kernel[n];
         double y_coords_kernel[n];
 
@@ -148,7 +151,7 @@ extern "C" Solution *solve_cvrp(
         cudaMemcpy(x_coords_kernel, x_coords, n * sizeof(double), cudaMemcpyHostToDevice);
         cudaMemcpy(y_coords_kernel, y_coords, n * sizeof(double), cudaMemcpyHostToDevice);
 
-        solve_cvrp_kernel<<<BLOCKS*NUM_THREADS>>>(n,isRoundingInteger,x_coords_kernel,y_coords_kernel,distance_matrix_kernel);
+        solve_cvrp_kernel<<<BLOCKS * NUM_THREADS>>>(n, isRoundingInteger, x_coords_kernel, y_coords_kernel, distance_matrix_kernel);
 
         cudaMemcpy(distance_matrix_kernel2, distance_matrix_kernel, n * n * sizeof(double), cudaMemcpyHostToDevice);
 
@@ -156,7 +159,7 @@ extern "C" Solution *solve_cvrp(
         {
             for (int j = 0; j < n; j++)
             {
-                distance_matrix[i][j]=distance_matrix_kernel2[(i*n)+j];
+                distance_matrix[i][j] = distance_matrix_kernel2[(i * n) + j];
             }
         }
 
@@ -575,8 +578,8 @@ InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInte
             inputFile >> content >> demands[i];
             service_time[i] = (i == 0) ? 0. : serviceTimeData;
         }
-        //bookmarkimp
-        // Calculating 2D Euclidean Distance
+        // bookmarkimp
+        //  Calculating 2D Euclidean Distance
         dist_mtx = std::vector<std::vector<double>>(nbClients + 1, std::vector<double>(nbClients + 1));
         for (int i = 0; i <= nbClients; i++)
         {
@@ -1545,14 +1548,10 @@ Params::Params(
     correlatedVertices = std::vector<std::vector<int>>(nbClients + 1);
     std::vector<std::set<int>> setCorrelatedVertices = std::vector<std::set<int>>(nbClients + 1);
     std::vector<std::pair<double, int>> orderProximity;
-    //bookmarkimp
-
-    
+    // bookmarkimp
 
     // correlatedVertices_kernel<<<BLOCKS*NUMS_THREADS>>>(int nbClients,double orderProximity,int ap_nbGranular);
 
-
-    
     for (int i = 1; i <= nbClients; i++)
     {
         orderProximity.clear();
@@ -1692,8 +1691,8 @@ void Population::updateBiasedFitnesses(SubPopulation &pop)
         // bookmarkimp
         int pop_size = (int)pop.size();
         int params_ap_nbElite = params.ap.nbElite;
-        int *ranking_second, *ranking_second2=(int *)malloc(sizeof(int) * pop_size);
-        double *pop_ranking_second_biasedFitness, *pop_ranking_second_biasedFitness2=(double *)malloc(sizeof(double) * pop_size);
+        int *ranking_second, *ranking_second2 = (int *)malloc(sizeof(int) * pop_size);
+        double *pop_ranking_second_biasedFitness, *pop_ranking_second_biasedFitness2 = (double *)malloc(sizeof(double) * pop_size);
 
         for (int i = 0; i < pop_size; i++)
         {
