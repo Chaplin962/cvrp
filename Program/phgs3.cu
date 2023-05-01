@@ -1715,7 +1715,12 @@ void Population::restart()
 
 __global__ void managePenalties_kernel(int infeasible_subpopsize, int params_penaltyCapacity, int params_penaltyDuration, double *infeasiblesubpop_evalpenalcost, double *infeasiblesubpop_evaldist, double *infeasiblesubpop_evalcapexcess, double *infeasiblesubpop_evaldurexcess)
 {
+    int tid = threadIdx.x;
 
+    if (tid < (int)infeasible_subpopsize)
+    {
+        infeasiblesubpop_evalpenalcost[tid] = infeasiblesubpop_evaldist[tid] + params_penaltyCapacity * infeasiblesubpop_evalcapexcess[tid] + params_penaltyDuration * infeasiblesubpop_evaldurexcess[tid];
+    }
 }
 
 void Population::managePenalties()
@@ -1737,7 +1742,7 @@ void Population::managePenalties()
     // Update the evaluations
     // bookmarkimp
     int infeasible_subpopsize=(int) infeasibleSubpop.size();
-    double *infeasiblesubpop_evalpenalcost, *infeasiblesubpop_evaldist, *infeasiblesubpop_evalcapexcess, *infeasiblesubpop_evaldurexcess = (double*)malloc(sizeof(double)*infeasible_subpopsize);
+    double *infeasiblesubpop_evalpenalcost, *infeasiblesubpop_evalpenalcost2, *infeasiblesubpop_evaldist, *infeasiblesubpop_evalcapexcess, *infeasiblesubpop_evaldurexcess = (double*)malloc(sizeof(double)*infeasible_subpopsize);
     int params_penaltyCapacity = params.penaltyCapacity;
     int params_penaltyDuration = params.penaltyDuration;
 
@@ -1748,8 +1753,15 @@ void Population::managePenalties()
 
     managePenalties_kernel<<<BLOCKS, NUM_THREADS>>>(infeasible_subpopsize, params_penaltyCapacity, params_penaltyDuration, infeasiblesubpop_evalpenalcost, infeasiblesubpop_evaldist, infeasiblesubpop_evalcapexcess, infeasiblesubpop_evaldurexcess);
 
-    for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
+    cudaMemcpy(infeasiblesubpop_evalpenalcost2, infeasiblesubpop_evalpenalcost, infeasible_subpopsize * sizeof(int), cudaMemcpyDeviceToHost);
+
+    for (int i=0 ; i < infeasible_subpopsize ; i++){
+        infeasibleSubpop[i]->eval.penalizedCost = infeasiblesubpop_evalpenalcost2[i];
+    }
+
+    /*for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
         infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
+    */
 
     // If needed, reorder the individuals in the infeasible subpopulation since the penalty values have changed (simple bubble sort for the sake of simplicity)
     // bookmarkimp
