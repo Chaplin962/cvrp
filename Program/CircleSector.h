@@ -39,7 +39,7 @@ struct CircleSector
 
 	// Extends the circle sector to include an additional point 
 	// Done in a "greedy" way, such that the resulting circle sector is the smallest
-	__host__ __device__ void extend(int point)
+	void extend(int point)
 	{
 		if (!isEnclosed(point))
 		{
