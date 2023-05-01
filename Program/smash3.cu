@@ -1860,7 +1860,7 @@ __global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynod
 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (!mynode->isDepot || firstIt && tid < BLOCKS * NUM_THREADS)
+    while (!mynode->isDepot || firstIt && tid < BLOCKS * NUM_THREADS)
     {
         mynode = mynode->next;
         myplace++;
@@ -1876,6 +1876,10 @@ __global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynod
         {
             cumulatedX += (*parallel_coordX)[mynode->cour];
             cumulatedY += (*parallel_coordY)[mynode->cour];
+            if (firstIt)
+                myRoute->sector.initialize(*parallel_polarAngle[mynode->cour]);
+            else
+                myRoute->sector.extend((*parallel_polarAngle)[mynode->cour]);
         }
 
         firstIt = false;
@@ -1890,14 +1894,18 @@ void LocalSearch::updateRouteData(Route *myRoute)
     double myReversalDistance = 0.;
     double cumulatedX = 0.;
     double cumulatedY = 0.;
-//[edit initialization of parallel variables]
+    //[edit initialization of parallel variables]
     Node *mynode = myRoute->depot, *mynode2 = myRoute->depot;
+
     mynode->position = 0;
     mynode2->position = 0;
+
     mynode->cumulatedLoad = 0.;
     mynode2->cumulatedLoad = 0.;
+
     mynode->cumulatedTime = 0.;
     mynode2->cumulatedTime = 0.;
+
     mynode->cumulatedReversalDistance = 0.;
     mynode2->cumulatedReversalDistance = 0.;
 
@@ -1951,27 +1959,25 @@ void LocalSearch::updateRouteData(Route *myRoute)
     cudaMemcpy(parallel_coordX, coordY, count * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(parallel_polarAngle, polarAngle, count * sizeof(int), cudaMemcpyHostToDevice);
 
+    updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timeCost, parallel_coordX, parallel_coordY, parallel_polarAngle);
+
+    cudaMemcpy(parallel_myRoute, myRoute, sizeof(Route), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parallel_mynode, mynode, sizeof(Route), cudaMemcpyDeviceToHost);
+    cudaMemcpy(params_cli, params_cli2, count * sizeof(Client), cudaMemcpyDeviceToHost);
+    cudaMemcpy(params_timeCost, params_timeCost2, count * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parallel_coordX, coordX, count * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parallel_coordX, coordY, count * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parallel_polarAngle, polarAngle, count * sizeof(int), cudaMemcpyDeviceToHost);
+
     mynode = mynode2;
 
     while (!mynode->isDepot || firstIt)
     {
         mynode = mynode->next;
-        cudaMemcpy(parallel_mynode, mynode, sizeof(Route), cudaMemcpyDeviceToHost);
-        updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timeCost, parallel_coordX, parallel_coordY, parallel_polarAngle);
-
-        cudaMemcpy(parallel_polarAngle, polarAngle, count * sizeof(int), cudaMemcpyDeviceToHost);
 
         (params.cli[mynode->cour].coordX) = *coordX[mynode->cour];
         (params.cli[mynode->cour].coordY) = *coordY[mynode->cour];
         (params.cli[mynode->cour].polarAngle) = *polarAngle[mynode->cour];
-
-        if (!mynode->isDepot)
-        {
-            if (firstIt)
-                myRoute->sector.initialize((*polarAngle)[mynode->cour]);
-            else
-                myRoute->sector.extend((*polarAngle)[mynode->cour]);
-        }
     }
 
     /*

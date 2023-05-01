@@ -18,7 +18,7 @@ struct CircleSector
 	}
 
 	// Initialize a circle sector from a single point
-	void initialize(int point)
+	__host__ __device__ void initialize(int point)
 	{
 		start = point;
 		end = point;
@@ -39,7 +39,7 @@ struct CircleSector
 
 	// Extends the circle sector to include an additional point 
 	// Done in a "greedy" way, such that the resulting circle sector is the smallest
-	void extend(int point)
+	__host__ __device__ void extend(int point)
 	{
 		if (!isEnclosed(point))
 		{

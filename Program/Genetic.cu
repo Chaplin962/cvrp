@@ -85,7 +85,7 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
 		freqClient[result.chromT[j % params.nbClients]] = true;
 		j++;
 	}
-
+	//[bookmark]
 	// Fill the remaining elements in the order given by the second parent
 	for (int i = 1; i <= params.nbClients; i++)
 	{
