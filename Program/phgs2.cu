@@ -575,7 +575,7 @@ InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInte
             inputFile >> content >> demands[i];
             service_time[i] = (i == 0) ? 0. : serviceTimeData;
         }
-
+        //bookmarkimp
         // Calculating 2D Euclidean Distance
         dist_mtx = std::vector<std::vector<double>>(nbClients + 1, std::vector<double>(nbClients + 1));
         for (int i = 0; i <= nbClients; i++)
@@ -1372,11 +1372,9 @@ void LocalSearch::loadIndividual(const Individual &indiv)
         }
         updateRouteData(&routes[r]);
         routes[r].whenLastTestedSWAPStar = -1;
-        // bookmark
         for (int i = 1; i <= params.nbClients; i++) // Initializing memory structures
             bestInsertClient[r][i].whenLastCalculated = -1;
     }
-    // bookmark
     for (int i = 1; i <= params.nbClients; i++) // Initializing memory structures
         clients[i].whenLastTestedRI = -1;
 }
@@ -1414,13 +1412,11 @@ LocalSearch::LocalSearch(Params &params) : params(params)
     depotsEnd = std::vector<Node>(params.nbVehicles);
     bestInsertClient = std::vector<std::vector<ThreeBestInsert>>(params.nbVehicles, std::vector<ThreeBestInsert>(params.nbClients + 1));
 
-    // bookmark
     for (int i = 0; i <= params.nbClients; i++)
     {
         clients[i].cour = i;
         clients[i].isDepot = false;
     }
-    // bookmark
     for (int i = 0; i < params.nbVehicles; i++)
     {
         routes[i].cour = i;
@@ -1443,6 +1439,30 @@ LocalSearch::LocalSearch(Params &params) : params(params)
 // The universal constructor for both executable and shared library
 // When the executable is run from the commandline,
 // it will first generate an CVRPLIB instance from .vrp file, then supply necessary information.
+
+// __global__ void correlatedVertices_kernel(int nbClients,double orderProximity_kernel,int ap_nbGranular){
+
+//     tid=threadIdx.x;
+
+//     if(tid <= nbClients)
+//     {
+//         //orderProximity.clear();
+//         int k=0;
+//         for (int j = 1; j <= nbClients; j++)
+//             if (tid != j)
+//                 orderProximity_kernel[k]=timeCost[i][j];
+//                 orderProximity_kernel[k+1]=j;
+//         std::sort(orderProximity.begin(), orderProximity.end());
+
+//         for (int j = 0; j < std::min<int>(ap.nbGranular, nbClients - 1); j++)
+//         {
+//             // If i is correlated with j, then j should be correlated with i
+//             setCorrelatedVertices[i].insert(orderProximity[j].second);
+//             setCorrelatedVertices[orderProximity[j].second].insert(i);
+//         }
+//     }
+// }
+
 Params::Params(
     const std::vector<double> &x_coords,
     const std::vector<double> &y_coords,
@@ -1525,6 +1545,14 @@ Params::Params(
     correlatedVertices = std::vector<std::vector<int>>(nbClients + 1);
     std::vector<std::set<int>> setCorrelatedVertices = std::vector<std::set<int>>(nbClients + 1);
     std::vector<std::pair<double, int>> orderProximity;
+    //bookmarkimp
+
+    
+
+    // correlatedVertices_kernel<<<BLOCKS*NUMS_THREADS>>>(int nbClients,double orderProximity,int ap_nbGranular);
+
+
+    
     for (int i = 1; i <= nbClients; i++)
     {
         orderProximity.clear();
@@ -1542,7 +1570,6 @@ Params::Params(
     }
 
     // Filling the vector of correlated vertices
-    // bookmark
     for (int i = 1; i <= nbClients; i++)
         for (int x : setCorrelatedVertices[i])
             correlatedVertices[i].push_back(x);
@@ -1988,7 +2015,6 @@ int Split::splitSimple(Individual &indiv)
 {
     // Reinitialize the potential structures
     potential[0][0] = 0;
-    // bookmarkpartiallyimp
     for (int i = 1; i <= params.nbClients; i++)
         potential[0][i] = 1.e30;
 
@@ -2049,7 +2075,6 @@ int Split::splitSimple(Individual &indiv)
         throw std::string("ERROR : no Split solution has been propagated until the last node");
 
     // Filling the chromR structure
-    // bookmark
     for (int k = params.nbVehicles - 1; k >= maxVehicles; k--)
         indiv.chromR[k].clear();
 
@@ -2155,7 +2180,6 @@ int Split::splitLF(Individual &indiv)
         }
 
     // Filling the chromR structure
-    // bookmark
     for (int k = params.nbVehicles - 1; k >= nbRoutes; k--)
         indiv.chromR[k].clear();
 
