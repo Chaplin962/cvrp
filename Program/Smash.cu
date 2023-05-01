@@ -1890,10 +1890,18 @@ __global__ void updateRouteData_kernel(Route *myRoute,Node *mynode,int myplace,d
 		{
 			cumulatedX += params_cli[mynode->cour*5+2];
 			cumulatedY += params_cli[mynode->cour*5+3];
-			if (firstIt)
-				myRoute->sector.initialize(params_cli[mynode->cour*5+4]);
-			else
-				myRoute->sector.extend(params_cli[mynode->cour*5+4]);
+			// if (firstIt)
+			// 	myRoute->sector.initialize(params_cli[mynode->cour*5+4]);
+			// else
+			if((((int)params_cli[mynode->cour*5+4] - (int)myRoute->sector.start) % 65536 + 65536) % 65536 > (((int)myRoute->sector.end - (int)myRoute->sector.start) % 65536 + 65536) % 65536){
+				if((((int)params_cli[mynode->cour*5+4] - (int)myRoute->sector.end) % 65536 + 65536) % 65536 > (((int)myRoute->sector.start - (int)params_cli[mynode->cour*5+4]) % 65536 + 65536) % 65536){
+					myRoute->sector.end=params_cli[mynode->cour*5+4];
+				}
+				else{
+					myRoute->sector.start=params_cli[mynode->cour*5+4];
+				}
+			}
+			//myRoute->sector.extend(params_cli[mynode->cour*5+4]);
 		}
 		firstIt = false;
 	}
@@ -1915,6 +1923,29 @@ void LocalSearch::updateRouteData(Route *myRoute)
 	mynode->cumulatedReversalDistance = 0.;
 
 	bool firstIt = true;
+
+	if(!mynode->isDepot || firstIt)
+	{
+		mynode = mynode->next;
+		myplace++;
+		mynode->position = myplace;
+		myload += params.cli[mynode->cour].demand;
+		mytime += params.timeCost[mynode->prev->cour][mynode->cour] + params.cli[mynode->cour].serviceDuration;
+		myReversalDistance += params.timeCost[mynode->cour][mynode->prev->cour] - params.timeCost[mynode->prev->cour][mynode->cour];
+		mynode->cumulatedLoad = myload;
+		mynode->cumulatedTime = mytime;
+		mynode->cumulatedReversalDistance = myReversalDistance;
+		if (!mynode->isDepot)
+		{
+			cumulatedX += params.cli[mynode->cour].coordX;
+			cumulatedY += params.cli[mynode->cour].coordY;
+			if (firstIt)
+				myRoute->sector.initialize(params.cli[mynode->cour].polarAngle);
+			else
+				myRoute->sector.extend(params.cli[mynode->cour].polarAngle);
+		}
+		firstIt = false;
+	}
 
 	Route *parallel_myRoute;
 	Node *parallel_mynode;
@@ -1981,29 +2012,6 @@ void LocalSearch::updateRouteData(Route *myRoute)
 	cudaMemcpy(&params_timeCost, &params_timeCost2, count1*sizeof(double), cudaMemcpyHostToDevice);
 
 	updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timeCost);
-
-	/*while (!mynode->isDepot || firstIt)
-	{
-		mynode = mynode->next;
-		myplace++;
-		mynode->position = myplace;
-		myload += params.cli[mynode->cour].demand;
-		mytime += params.timeCost[mynode->prev->cour][mynode->cour] + params.cli[mynode->cour].serviceDuration;
-		myReversalDistance += params.timeCost[mynode->cour][mynode->prev->cour] - params.timeCost[mynode->prev->cour][mynode->cour];
-		mynode->cumulatedLoad = myload;
-		mynode->cumulatedTime = mytime;
-		mynode->cumulatedReversalDistance = myReversalDistance;
-		if (!mynode->isDepot)
-		{
-			cumulatedX += params.cli[mynode->cour].coordX;
-			cumulatedY += params.cli[mynode->cour].coordY;
-			if (firstIt)
-				myRoute->sector.initialize(params.cli[mynode->cour].polarAngle);
-			else
-				myRoute->sector.extend(params.cli[mynode->cour].polarAngle);
-		}
-		firstIt = false;
-	}*/
 
 	myRoute->duration = mytime;
 	myRoute->load = myload;
