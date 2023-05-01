@@ -138,7 +138,7 @@ extern "C" Solution *solve_cvrp(
         std::vector<std::vector<double>> distance_matrix(n, std::vector<double>(n));
         // bookmarkimp
 
-        double *distance_matrix2 = (double *)malloc(sizeof(double) * n * n), *x_coords2 = (double *)malloc(sizeof(double) * n), *y_coords2 = (double *)malloc(sizeof(double) * n);
+        double *distance_matrix2 = (double *)malloc(sizeof(double) * n * n);
         double *parallel_distance_matrix, *parallel_x_coords, *parallel_y_coords;
 
         for (int i = 0; i < n; i++)
@@ -147,8 +147,6 @@ extern "C" Solution *solve_cvrp(
             {
                 distance_matrix2[i * n + j] = distance_matrix[i][j];
             }
-            y_coords2[i] = y_coords[i];
-            x_coords2[i] = x_coords[i];
         }
 
         cudaMalloc((void **)&parallel_distance_matrix, n * n * sizeof(double));
@@ -156,8 +154,8 @@ extern "C" Solution *solve_cvrp(
         cudaMalloc((void **)&parallel_y_coords, n * sizeof(double));
 
         cudaMemcpy(parallel_distance_matrix, distance_matrix2, n * n * sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(parallel_x_coords, x_coords2, n * sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(parallel_y_coords, y_coords2, n * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(parallel_x_coords, &x_coords, n * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(parallel_y_coords, &y_coords, n * sizeof(double), cudaMemcpyHostToDevice);
 
         int divisions = (n / BLOCKS) / NUM_THREADS;
 
@@ -178,8 +176,6 @@ extern "C" Solution *solve_cvrp(
         }
 
         free(distance_matrix2);
-        free(x_coords2);
-        free(y_coords2);
         cudaFree(parallel_distance_matrix);
         cudaFree(parallel_x_coords);
         cudaFree(parallel_y_coords);
@@ -361,7 +357,6 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     //[bookmark]
     // Fill the remaining elements in the order given by the second parent
 
-    bool *freqClient2 = (bool *)malloc(sizeof(bool) * params.nbClients);
     int *parent2ChromT2 = (int *)malloc(sizeof(int) * params.nbClients);
     int *resultChromT2 = (int *)malloc(sizeof(int) * params.nbClients);
 
@@ -374,7 +369,6 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     {
         count++;
         parent2ChromT2[(end + i) % params.nbClients] = parent2.chromT[(end + i) % params.nbClients];
-        freqClient2[parent2.chromT[(end + i) % params.nbClients]] = freqClient[parent2.chromT[(end + i) % params.nbClients]];
         {
             resultChromT2[j % params.nbClients] = result.chromT[j % params.nbClients];
             j++;
@@ -387,7 +381,7 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     cudaMalloc((void **)&parallel_parent2ChromT, count * sizeof(Individual));
     cudaMalloc((void **)&parallel_resultChromT, count * sizeof(Individual));
 
-    cudaMemcpy(parallel_freqClient, freqClient2, count * sizeof(bool), cudaMemcpyHostToDevice);
+    cudaMemcpy(parallel_freqClient, &freqClient, count * sizeof(bool), cudaMemcpyHostToDevice);
     cudaMemcpy(parallel_parent2ChromT, parent2ChromT2, count * sizeof(Individual), cudaMemcpyHostToDevice);
     cudaMemcpy(parallel_resultChromT, resultChromT2, count * sizeof(Individual), cudaMemcpyHostToDevice);
 
@@ -424,7 +418,7 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     //     j++;
     // }
     // }
-    free(freqClient2);
+
     free(parent2ChromT2);
     free(resultChromT2);
     cudaFree(parallel_freqClient);
@@ -541,6 +535,25 @@ Individual::Individual(Params &params, std::string fileName) : Individual(params
 #include <cmath>
 #include "InstanceCVRPLIB.h"
 
+__global__ void InstanceCVRPLI_kernel(int divisions, int nbClients, double *dist_mtx, double *x_coords, double *y_coords, char isRoundingInteger)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    for (int k = 0; k <= divisions && (tid * divisions + k) < nbClients; k++)
+    {
+        for (int i = 0; i <= nbClients; i++)
+        {
+            for (int j = 0; j <= nbClients; j++)
+            {
+                dist_mtx[i * nbClients + j] = std::sqrt(
+                    (x_coords[i] - x_coords[j]) * (x_coords[i] - x_coords[j]) + (y_coords[i] - y_coords[j]) * (y_coords[i] - y_coords[j]));
+
+                if (isRoundingInteger)
+                    dist_mtx[i * nbClients + j] = round(dist_mtx[i * nbClients + j]);
+            }
+        }
+    }
+}
+
 InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInteger = true)
 {
     std::string content, content2, content3;
@@ -610,18 +623,62 @@ InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInte
         }
 
         // Calculating 2D Euclidean Distance
+        // bookmarkimp2
         dist_mtx = std::vector<std::vector<double>>(nbClients + 1, std::vector<double>(nbClients + 1));
-        for (int i = 0; i <= nbClients; i++)
-        {
-            for (int j = 0; j <= nbClients; j++)
-            {
-                dist_mtx[i][j] = std::sqrt(
-                    (x_coords[i] - x_coords[j]) * (x_coords[i] - x_coords[j]) + (y_coords[i] - y_coords[j]) * (y_coords[i] - y_coords[j]));
 
-                if (isRoundingInteger)
-                    dist_mtx[i][j] = round(dist_mtx[i][j]);
+        double *dist_mtx2 = (double *)malloc(sizeof(double) * nbClients * nbClients);
+        double *parallel_dist_mtx, *parallel_x_coords, *parallel_y_coords;
+
+        for (int i = 0; i < nbClients; i++)
+        {
+            for (int j = 0; j < nbClients; j++)
+            {
+                dist_mtx2[i * nbClients + j] = dist_mtx[i][j];
             }
         }
+
+        cudaMalloc((void **)&parallel_dist_mtx, nbClients * nbClients * sizeof(double));
+        cudaMalloc((void **)&parallel_x_coords, nbClients * sizeof(double));
+        cudaMalloc((void **)&parallel_y_coords, nbClients * sizeof(double));
+
+        cudaMemcpy(parallel_dist_mtx, dist_mtx2, nbClients * nbClients * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(parallel_x_coords, &x_coords, nbClients * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(parallel_y_coords, &y_coords, nbClients * sizeof(double), cudaMemcpyHostToDevice);
+
+        int divisions = (nbClients / BLOCKS) / NUM_THREADS;
+
+        if (divisions == 0)
+        {
+            divisions++;
+        }
+
+        InstanceCVRPLI_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, nbClients, parallel_dist_mtx, parallel_x_coords, parallel_y_coords, isRoundingInteger);
+
+        cudaMemcpy(parallel_dist_mtx, dist_mtx2, nbClients * nbClients * sizeof(double), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < nbClients; i++)
+        {
+            for (int j = 0; j < nbClients; j++)
+            {
+                dist_mtx[i][j] = dist_mtx2[i * nbClients + j];
+            }
+        }
+
+        free(dist_mtx2);
+        cudaFree(parallel_dist_mtx);
+        cudaFree(parallel_x_coords);
+        cudaFree(parallel_y_coords);
+
+        // for (int i = 0; i <= nbClients; i++)
+        // {
+        //     for (int j = 0; j <= nbClients; j++)
+        //     {
+        //         dist_mtx[i][j] = std::sqrt(
+        //             (x_coords[i] - x_coords[j]) * (x_coords[i] - x_coords[j]) + (y_coords[i] - y_coords[j]) * (y_coords[i] - y_coords[j]));
+
+        //         if (isRoundingInteger)
+        //             dist_mtx[i][j] = round(dist_mtx[i][j]);
+        //     }
+        // }
 
         // Reading depot information (in all current instances the depot is represented as node 1, the program will return an error otherwise)
         inputFile >> content >> content2 >> content3 >> content3;
@@ -640,8 +697,6 @@ InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInte
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
-#define NUM_THREADS 1024
-#define BLOCKS 1024
 
 void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
 {
@@ -1558,6 +1613,7 @@ Params::Params(
     correlatedVertices = std::vector<std::vector<int>>(nbClients + 1);
     std::vector<std::set<int>> setCorrelatedVertices = std::vector<std::set<int>>(nbClients + 1);
     std::vector<std::pair<double, int>> orderProximity;
+    // bookmarkimp2
     for (int i = 1; i <= nbClients; i++)
     {
         orderProximity.clear();
@@ -1805,7 +1861,7 @@ void Population::managePenalties()
         params.penaltyDuration = std::max<double>(params.penaltyDuration * params.ap.penaltyDecrease, 0.1);
 
     // Update the evaluations
-    // bookmarkimp
+    // bookmarkimp2
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
         infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
 
