@@ -4,6 +4,8 @@
 
 #include "AlgorithmParameters.h"
 #include <iostream>
+#define NUM_THREADS 1024
+#define BLOCKS 1024
 
 extern "C" struct AlgorithmParameters default_algorithm_parameters()
 {
@@ -105,6 +107,21 @@ Solution *prepare_solution(Population &population, Params &params)
     return sol;
 }
 
+__global__ void solve_cvrp_kernel(int n, char isRoundingInteger, double x_coords_kernel, double y_coords_kernel, double *distance_matrix_kernel){
+
+    int tidy= blockIdx.y * blockDim.y + threadIdx.y;
+    int tidx= blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (tidy >= n || tidx>=n){
+        return;
+    }
+    distance_matrix_kernel[(tidy*n)+tidx] = std::sqrt(
+        (x_coords_kernel[tidy] - x_coords_kernel[tidx]) * (x_coords_kernel[tidy] - x_coords_kernel[tidx]) + (y_coords_kernel[tidy] - y_coords_kernel[tidx]) * (y_coords_kernel[tidy] - y_coords_kernel[tidx]));
+    if (isRoundingInteger)
+        distance_matrix_kernel[(tidy*n)+tidx] = std::round(distance_matrix_kernel[(tidy*n)+tidx]);
+            
+}
+
 extern "C" Solution *solve_cvrp(
     int n, double *x, double *y, double *serv_time, double *dem,
     double vehicleCapacity, double durationLimit, char isRoundingInteger, char isDurationConstraint,
@@ -121,7 +138,29 @@ extern "C" Solution *solve_cvrp(
 
         std::vector<std::vector<double>> distance_matrix(n, std::vector<double>(n));
         // bookmarkimp
+
+        double *distance_matrix_kernel[n*n],distance_matrix_kernel2[n*n];
+        double x_coords_kernel[n];
+        double y_coords_kernel[n];
+
+        cudaMalloc((void **)&distance_matrix_kernel, n * n * sizeof(double));
+
+        cudaMemcpy(x_coords_kernel, x_coords, n * sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(y_coords_kernel, y_coords, n * sizeof(double), cudaMemcpyHostToDevice);
+
+        solve_cvrp_kernel<<<BLOCKS*NUM_THREADS>>>(n,isRoundingInteger,x_coords_kernel,y_coords_kernel,distance_matrix_kernel);
+
+        cudaMemcpy(distance_matrix_kernel2, distance_matrix_kernel, n * n * sizeof(double), cudaMemcpyHostToDevice);
+
         for (int i = 0; i < n; i++)
+        {
+            for (int j = 0; j < n; j++)
+            {
+                distance_matrix[i][j]=distance_matrix_kernel2[(i*n)+j];
+            }
+        }
+
+        /*for (int i = 0; i < n; i++)
         {
             for (int j = 0; j < n; j++)
             {
@@ -130,7 +169,7 @@ extern "C" Solution *solve_cvrp(
                 if (isRoundingInteger)
                     distance_matrix[i][j] = std::round(distance_matrix[i][j]);
             }
-        }
+        }*/
 
         Params params(x_coords, y_coords, distance_matrix, service_time, demands, vehicleCapacity, durationLimit, max_nbVeh, isDurationConstraint, verbose, *ap);
 
