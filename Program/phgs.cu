@@ -103,7 +103,7 @@ Solution *prepare_solution(Population &population, Params &params)
     return sol;
 }
 
-__global__ void solve_cvrp_kernel(int divisions, int n, double *distance_matrix, double *x_coords, double *y_coords, char isRoundingInteger)
+__global__ void solve_cvrp_kernel(int n, double *distance_matrix, double *x_coords, double *y_coords, char isRoundingInteger)
 {
     int tidy = blockIdx.y * blockDim.y + threadIdx.y;
     int tidx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -156,14 +156,7 @@ extern "C" Solution *solve_cvrp(
         cudaMemcpy(parallel_x_coords, x_coords2, n * sizeof(double), cudaMemcpyHostToDevice);
         cudaMemcpy(parallel_y_coords, y_coords2, n * sizeof(double), cudaMemcpyHostToDevice);
 
-        int divisions = (n / BLOCKS) / NUM_THREADS;
-
-        if (divisions == 0)
-        {
-            divisions++;
-        }
-
-        solve_cvrp_kernel<<<n, n>>>(divisions, n, parallel_distance_matrix, parallel_x_coords, parallel_y_coords, isRoundingInteger);
+        solve_cvrp_kernel<<<n, n>>>(n, parallel_distance_matrix, parallel_x_coords, parallel_y_coords, isRoundingInteger);
 
         cudaMemcpy(parallel_distance_matrix, distance_matrix2, n * n * sizeof(double), cudaMemcpyDeviceToHost);
         for (int i = 0; i < n; i++)
@@ -358,7 +351,6 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     //[bookmark]
     // Fill the remaining elements in the order given by the second parent
 
-    bool *freqClient2 = (bool *)malloc(sizeof(bool) * params.nbClients);
     int *parent2ChromT2 = (int *)malloc(sizeof(int) * params.nbClients);
     int *resultChromT2 = (int *)malloc(sizeof(int) * params.nbClients);
 
@@ -371,7 +363,6 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     {
         count++;
         parent2ChromT2[(end + i) % params.nbClients] = parent2.chromT[(end + i) % params.nbClients];
-        freqClient2[parent2.chromT[(end + i) % params.nbClients]] = freqClient[parent2.chromT[(end + i) % params.nbClients]];
         {
             resultChromT2[j % params.nbClients] = result.chromT[j % params.nbClients];
             j++;
@@ -384,7 +375,7 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     cudaMalloc((void **)&parallel_parent2ChromT, count * sizeof(Individual));
     cudaMalloc((void **)&parallel_resultChromT, count * sizeof(Individual));
 
-    cudaMemcpy(parallel_freqClient, freqClient2, count * sizeof(bool), cudaMemcpyHostToDevice);
+    cudaMemcpy(parallel_freqClient, &freqClient, count * sizeof(bool), cudaMemcpyHostToDevice);
     cudaMemcpy(parallel_parent2ChromT, parent2ChromT2, count * sizeof(Individual), cudaMemcpyHostToDevice);
     cudaMemcpy(parallel_resultChromT, resultChromT2, count * sizeof(Individual), cudaMemcpyHostToDevice);
 
@@ -394,7 +385,7 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
         divisions++;
     }
 
-    crossoverOX_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, params.nbClients, parallel_freqClient, parallel_parent2ChromT, end, parallel_resultChromT, j);
+    crossoverOX_kernel<<<params.nbClients, params.nbClients>>>(divisions, params.nbClients, parallel_freqClient, parallel_parent2ChromT, end, parallel_resultChromT, j);
 
     // cudaMemcpy(parallel_freqClient, freqClient2, count * sizeof(bool), cudaMemcpyDeviceToHost);
     // cudaMemcpy(parallel_parent2ChromT, parent2ChromT2, count * sizeof(Individual), cudaMemcpyDeviceToHost);
@@ -421,7 +412,7 @@ void Genetic::crossoverOX(Individual &result, const Individual &parent1, const I
     //     j++;
     // }
     // }
-    free(freqClient2);
+
     free(parent2ChromT2);
     free(resultChromT2);
     cudaFree(parallel_freqClient);
@@ -538,6 +529,23 @@ Individual::Individual(Params &params, std::string fileName) : Individual(params
 #include <cmath>
 #include "InstanceCVRPLIB.h"
 
+// __global__ void InstanceCVRPLIB_kernel(double *dist_mtx, int nbClients, double *x_coords, double *y_coords, char isRoundingInteger)
+// {
+
+//     int tidy = blockIdx.y * blockDim.y + threadIdx.y;
+//     int tidx = blockIdx.x * blockDim.x + threadIdx.x;
+
+//     if (tidy >= nbClients || tidx >= nbClients)
+//     {
+//         return;
+//     }
+//     dist_mtx[(tidx * nbClients) + tidy] = std::sqrt(
+//         (x_coords[tidx] - x_coords[tidy]) * (x_coords[tidx] - x_coords[tidy]) + (y_coords[tidx] - y_coords[tidy]) * (y_coords[tidx] - y_coords[tidy]));
+
+//     if (isRoundingInteger)
+//         dist_mtx[(tidx * nbClients) + tidy] = round(dist_mtx[(tidx * nbClients) + tidy]);
+// }
+
 InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInteger = true)
 {
     std::string content, content2, content3;
@@ -609,6 +617,38 @@ InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInte
         // Calculating 2D Euclidean Distance
         // bookmarkimp2
         dist_mtx = std::vector<std::vector<double>>(nbClients + 1, std::vector<double>(nbClients + 1));
+
+        // double *dist_mtx2 = (double *)malloc(sizeof(double) * nbClients * nbClients);
+        // double *parallel_dist_mtx, *parallel_x_coords, *parallel_y_coords;
+
+        // for (int i = 0; i <= nbClients; i++)
+        // {
+        //     for (int j = 0; j <= nbClients; j++)
+        //     {
+        //         dist_mtx2[i * nbClients + j] = dist_mtx[i][j];
+        //     }
+        // }
+
+        // cudaMalloc((void **)&parallel_dist_mtx, nbClients * nbClients * sizeof(double));
+        // cudaMalloc((void **)&parallel_x_coords, nbClients * sizeof(double));
+        // cudaMalloc((void **)&parallel_y_coords, nbClients * sizeof(double));
+
+        // cudaMemcpy(parallel_dist_mtx, &dist_mtx2, nbClients * nbClients * sizeof(double), cudaMemcpyHostToDevice);
+        // cudaMemcpy(parallel_x_coords, &x_coords, nbClients * sizeof(double), cudaMemcpyHostToDevice);
+        // cudaMemcpy(parallel_y_coords, &y_coords, nbClients * sizeof(double), cudaMemcpyHostToDevice);
+
+        // InstanceCVRPLIB_kernel<<<nbClients, nbClients>>>(parallel_dist_mtx, nbClients, parallel_x_coords, parallel_y_coords, isRoundingInteger);
+
+        // cudaMemcpy(parallel_dist_mtx, dist_mtx2, nbClients * nbClients * sizeof(double), cudaMemcpyDeviceToHost);
+
+        // for (int i = 0; i <= nbClients; i++)
+        // {
+        //     for (int j = 0; j <= nbClients; j++)
+        //     {
+        //         dist_mtx[i][j] = dist_mtx2[i * nbClients + j];
+        //     }
+        // }
+
         for (int i = 0; i <= nbClients; i++)
         {
             for (int j = 0; j <= nbClients; j++)
@@ -1664,17 +1704,32 @@ bool Population::addIndividual(const Individual &indiv, bool updateFeasible)
         return false;
 }
 
-__global__ void updateBiasedFitnesses_kernel(int divisions, int pop_size, int *ranking_second, int params_ap_nbElite, double *pop_ranking_second_biasedFitness)
+// __global__ void updateBiasedFitnesses_kernel(int divisions, int pop_size, int *ranking_second, int params_ap_nbElite, double *pop_ranking_second_biasedFitness)
+// {
+//     int tid = blockIdx.x * blockDim.x + threadIdx.x;
+//     for (int i = 0; i <= divisions && (tid * divisions + i) < (int)pop_size; i++)
+//     {
+//         double divRank = (double)tid * divisions + i / (double)(pop_size - 1); // Ranking from 0 to 1
+//         double fitRank = (double)ranking_second[tid * divisions + i] / (double)(pop_size - 1);
+//         if ((int)pop_size <= params_ap_nbElite) // Elite individuals cannot be smaller than population size
+//             pop_ranking_second_biasedFitness[tid * divisions + i] = fitRank;
+//         else
+//             pop_ranking_second_biasedFitness[tid * divisions + i] = fitRank + (1.0 - (double)params_ap_nbElite / (double)pop_size) * divRank;
+//     }
+// }
+
+__global__ void updateBiasedFitnesses_kernel(int pop_size, int *ranking_second, int params_ap_nbElite, double *pop_ranking_second_biasedFitness)
 {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int i = 0; i <= divisions && (tid * divisions + i) < (int)pop_size; i++)
+    int tid = threadIdx.x;
+
+    if (tid < (int)pop_size)
     {
-        double divRank = (double)tid * divisions + i / (double)(pop_size - 1); // Ranking from 0 to 1
-        double fitRank = (double)ranking_second[tid * divisions + i] / (double)(pop_size - 1);
+        double divRank = (double)tid / (double)(pop_size - 1); // Ranking from 0 to 1
+        double fitRank = (double)ranking_second[tid] / (double)(pop_size - 1);
         if ((int)pop_size <= params_ap_nbElite) // Elite individuals cannot be smaller than population size
-            pop_ranking_second_biasedFitness[tid * divisions + i] = fitRank;
+            pop_ranking_second_biasedFitness[tid] = fitRank;
         else
-            pop_ranking_second_biasedFitness[tid * divisions + i] = fitRank + (1.0 - (double)params_ap_nbElite / (double)pop_size) * divRank;
+            pop_ranking_second_biasedFitness[tid] = fitRank + (1.0 - (double)params_ap_nbElite / (double)pop_size) * divRank;
     }
 }
 
@@ -1692,6 +1747,34 @@ void Population::updateBiasedFitnesses(SubPopulation &pop)
     else
     {
         // bookmarkimp
+        // int pop_size = (int)pop.size();
+        // int params_ap_nbElite = params.ap.nbElite;
+        // int *ranking_second, *ranking_second2 = (int *)malloc(sizeof(int) * pop_size);
+        // double *pop_ranking_second_biasedFitness, *pop_ranking_second_biasedFitness2 = (double *)malloc(sizeof(double) * pop_size);
+
+        // for (int i = 0; i < pop_size; i++)
+        // {
+        //     ranking_second2[i] = ranking[i].second;
+        // }
+
+        // cudaMalloc((void **)&ranking_second, pop_size * sizeof(int));
+        // cudaMalloc((void **)&pop_ranking_second_biasedFitness, pop_size * sizeof(int));
+
+        // cudaMemcpy(ranking_second, ranking_second2, pop_size * sizeof(int), cudaMemcpyHostToDevice);
+        // int divisions = (params.nbClients / BLOCKS) / NUM_THREADS;
+        // if (divisions == 0)
+        // {
+        //     divisions++;
+        // }
+        // updateBiasedFitnesses_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, pop_size, ranking_second, params_ap_nbElite, pop_ranking_second_biasedFitness);
+
+        // cudaMemcpy(pop_ranking_second_biasedFitness2, pop_ranking_second_biasedFitness, pop_size * sizeof(int), cudaMemcpyDeviceToHost);
+
+        // for (int i = 0; i < pop_size; i++)
+        // {
+        //     pop[ranking[i].second]->biasedFitness = pop_ranking_second_biasedFitness2[i];
+        // }
+
         int pop_size = (int)pop.size();
         int params_ap_nbElite = params.ap.nbElite;
         int *ranking_second, *ranking_second2 = (int *)malloc(sizeof(int) * pop_size);
@@ -1706,12 +1789,8 @@ void Population::updateBiasedFitnesses(SubPopulation &pop)
         cudaMalloc((void **)&pop_ranking_second_biasedFitness, pop_size * sizeof(int));
 
         cudaMemcpy(ranking_second, ranking_second2, pop_size * sizeof(int), cudaMemcpyHostToDevice);
-        int divisions = (params.nbClients / BLOCKS) / NUM_THREADS;
-        if (divisions == 0)
-        {
-            divisions++;
-        }
-        updateBiasedFitnesses_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, pop_size, ranking_second, params_ap_nbElite, pop_ranking_second_biasedFitness);
+
+        updateBiasedFitnesses_kernel<<<BLOCKS, NUM_THREADS>>>(pop_size, ranking_second, params_ap_nbElite, pop_ranking_second_biasedFitness);
 
         cudaMemcpy(pop_ranking_second_biasedFitness2, pop_ranking_second_biasedFitness, pop_size * sizeof(int), cudaMemcpyDeviceToHost);
 
