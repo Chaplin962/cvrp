@@ -1759,10 +1759,9 @@ void Population::managePenalties()
         infeasibleSubpop[i]->eval.penalizedCost = infeasiblesubpop_evalpenalcost2[i];
     }
 
-    /*for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
-        infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
-    */
-
+    // for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
+    //     infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
+    
     // If needed, reorder the individuals in the infeasible subpopulation since the penalty values have changed (simple bubble sort for the sake of simplicity)
     // bookmarkimp
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
