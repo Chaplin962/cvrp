@@ -80,6 +80,7 @@ Solution *prepare_solution(Population &population, Params &params)
 
         // finding out the number of routes in the best individual
         int n_routes = 0;
+        // bookmarkreduction
         for (int k = 0; k < params.nbVehicles; k++)
             if (!best->chromR[k].empty())
                 ++n_routes;
@@ -87,6 +88,7 @@ Solution *prepare_solution(Population &population, Params &params)
         // filling out the route information
         sol->n_routes = n_routes;
         sol->routes = new SolutionRoute[n_routes];
+        // bookmarkimp
         for (int k = 0; k < n_routes; k++)
         {
             sol->routes[k].length = (int)best->chromR[k].size();
@@ -118,6 +120,7 @@ extern "C" Solution *solve_cvrp(
         std::vector<double> demands(dem, dem + n);
 
         std::vector<std::vector<double>> distance_matrix(n, std::vector<double>(n));
+        // bookmarkimp
         for (int i = 0; i < n; i++)
         {
             for (int j = 0; j < n; j++)
@@ -259,10 +262,10 @@ void Genetic::run()
 
 __global__ void crossoverOX_kernel(int divisions, int nbClients, bool *freqClient, int *parent2ChromT, int end, int *resultChromT, int j)
 {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    for (i = blockIdx.x * blockDim.x + threadIdx.x; i <= divisions && i < nbClients; i++)
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    for (int i = 0; i <= divisions && (tid * divisions + i) < nbClients; i++)
     {
-        int temp = parent2ChromT[(end + i) % nbClients];
+        int temp = parent2ChromT[(end + tid * divisions + i) % nbClients];
         if (freqClient[temp] == false)
         {
             resultChromT[j % nbClients] = temp;
@@ -376,6 +379,7 @@ Genetic::Genetic(Params &params) : params(params),
 void Individual::evaluateCompleteCost(const Params &params)
 {
     eval = EvalIndiv();
+    // bookmarkimpbut has paramas.timeCost
     for (int r = 0; r < params.nbVehicles; r++)
     {
         if (!chromR[r].empty())
@@ -413,6 +417,7 @@ Individual::Individual(Params &params)
     predecessors = std::vector<int>(params.nbClients + 1);
     chromR = std::vector<std::vector<int>>(params.nbVehicles);
     chromT = std::vector<int>(params.nbClients);
+    // bookmark
     for (int i = 0; i < params.nbClients; i++)
         chromT[i] = i + 1;
     std::shuffle(chromT.begin(), chromT.end(), params.ran);
@@ -1334,10 +1339,11 @@ void LocalSearch::loadIndividual(const Individual &indiv)
         }
         updateRouteData(&routes[r]);
         routes[r].whenLastTestedSWAPStar = -1;
+        // bookmark
         for (int i = 1; i <= params.nbClients; i++) // Initializing memory structures
             bestInsertClient[r][i].whenLastCalculated = -1;
     }
-
+    // bookmark
     for (int i = 1; i <= params.nbClients; i++) // Initializing memory structures
         clients[i].whenLastTestedRI = -1;
 }
@@ -1350,6 +1356,7 @@ void LocalSearch::exportIndividual(Individual &indiv)
     std::sort(routePolarAngles.begin(), routePolarAngles.end()); // empty routes have a polar angle of 1.e30, and therefore will always appear at the end
 
     int pos = 0;
+    // bookmark
     for (int r = 0; r < params.nbVehicles; r++)
     {
         indiv.chromR[r].clear();
@@ -1374,11 +1381,13 @@ LocalSearch::LocalSearch(Params &params) : params(params)
     depotsEnd = std::vector<Node>(params.nbVehicles);
     bestInsertClient = std::vector<std::vector<ThreeBestInsert>>(params.nbVehicles, std::vector<ThreeBestInsert>(params.nbClients + 1));
 
+    // bookmark
     for (int i = 0; i <= params.nbClients; i++)
     {
         clients[i].cour = i;
         clients[i].isDepot = false;
     }
+    // bookmark
     for (int i = 0; i < params.nbVehicles; i++)
     {
         routes[i].cour = i;
@@ -1430,6 +1439,7 @@ Params::Params(
     areCoordinatesProvided = (demands.size() == x_coords.size()) && (demands.size() == y_coords.size());
 
     cli = std::vector<Client>(nbClients + 1);
+    // bookmark
     for (int i = 0; i <= nbClients; i++)
     {
         // If useSwapStar==false, x_coords and y_coords may be empty.
@@ -1472,6 +1482,7 @@ Params::Params(
 
     // Calculation of the maximum distance
     maxDist = 0.;
+    // bookmark
     for (int i = 0; i <= nbClients; i++)
         for (int j = 0; j <= nbClients; j++)
             if (timeCost[i][j] > maxDist)
@@ -1498,6 +1509,7 @@ Params::Params(
     }
 
     // Filling the vector of correlated vertices
+    // bookmark
     for (int i = 1; i <= nbClients; i++)
         for (int x : setCorrelatedVertices[i])
             correlatedVertices[i].push_back(x);
@@ -1589,6 +1601,20 @@ bool Population::addIndividual(const Individual &indiv, bool updateFeasible)
         return false;
 }
 
+__global__ void updateBiasedFitnesses_kernel(int divisions, int pop_size, int *ranking_second, int params_ap_nbElite, double *pop_ranking_second_biasedFitness)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    for (int i = 0; i <= divisions && (tid * divisions + i) < (int)pop_size; i++)
+    {
+        double divRank = (double)tid * divisions + i / (double)(pop_size - 1); // Ranking from 0 to 1
+        double fitRank = (double)ranking_second[tid * divisions + i] / (double)(pop_size - 1);
+        if ((int)pop_size <= params_ap_nbElite) // Elite individuals cannot be smaller than population size
+            pop_ranking_second_biasedFitness[tid * divisions + i] = fitRank;
+        else
+            pop_ranking_second_biasedFitness[tid * divisions + i] = fitRank + (1.0 - (double)params_ap_nbElite / (double)pop_size) * divRank;
+    }
+}
+
 void Population::updateBiasedFitnesses(SubPopulation &pop)
 {
     // Ranking the individuals based on their diversity contribution (decreasing order of distance)
@@ -1602,6 +1628,36 @@ void Population::updateBiasedFitnesses(SubPopulation &pop)
         pop[0]->biasedFitness = 0;
     else
     {
+        // bookmarkimp
+        int pop_size = (int)pop.size();
+        int params_ap_nbElite = params.ap.nbElite;
+        int *ranking_second, *ranking_second2 = (int *)malloc(sizeof(int) * pop_size);
+        double *pop_ranking_second_biasedFitness, *pop_ranking_second_biasedFitness2 = (double *)malloc(sizeof(double) * pop_size);
+
+        for (int i = 0; i < pop_size; i++)
+        {
+            ranking_second2[i] = ranking[i].second;
+        }
+
+        cudaMalloc((void **)&ranking_second, pop_size * sizeof(int));
+        cudaMalloc((void **)&pop_ranking_second_biasedFitness, pop_size * sizeof(int));
+
+        cudaMemcpy(ranking_second, ranking_second2, pop_size * sizeof(int), cudaMemcpyHostToDevice);
+        int divisions = (params.nbClients / BLOCKS) / NUM_THREADS;
+        if (divisions == 0)
+        {
+            divisions++;
+        }
+        updateBiasedFitnesses_kernel<<<BLOCKS, NUM_THREADS>>>(divisions, pop_size, ranking_second, params_ap_nbElite, pop_ranking_second_biasedFitness);
+
+        cudaMemcpy(pop_ranking_second_biasedFitness2, pop_ranking_second_biasedFitness, pop_size * sizeof(int), cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < pop_size; i++)
+        {
+            pop[ranking[i].second]->biasedFitness = pop_ranking_second_biasedFitness2[i];
+        }
+
+        /*
         for (int i = 0; i < (int)pop.size(); i++)
         {
             double divRank = (double)i / (double)(pop.size() - 1); // Ranking from 0 to 1
@@ -1610,7 +1666,7 @@ void Population::updateBiasedFitnesses(SubPopulation &pop)
                 pop[ranking[i].second]->biasedFitness = fitRank;
             else
                 pop[ranking[i].second]->biasedFitness = fitRank + (1.0 - (double)params.ap.nbElite / (double)pop.size()) * divRank;
-        }
+        }*/
     }
 }
 
@@ -1683,10 +1739,12 @@ void Population::managePenalties()
         params.penaltyDuration = std::max<double>(params.penaltyDuration * params.ap.penaltyDecrease, 0.1);
 
     // Update the evaluations
+    // bookmarkimp
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
         infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
 
     // If needed, reorder the individuals in the infeasible subpopulation since the penalty values have changed (simple bubble sort for the sake of simplicity)
+    // bookmarkimp
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
     {
         for (int j = 0; j < (int)infeasibleSubpop.size() - i - 1; j++)
@@ -1769,6 +1827,7 @@ void Population::printState(int nbIter, int nbIterNoImprovement)
 double Population::brokenPairsDistance(const Individual &indiv1, const Individual &indiv2)
 {
     int differences = 0;
+    // bookmarkreduction
     for (int j = 1; j <= params.nbClients; j++)
     {
         if (indiv1.successors[j] != indiv2.successors[j] && indiv1.successors[j] != indiv2.predecessors[j])
@@ -1784,6 +1843,7 @@ double Population::averageBrokenPairsDistanceClosest(const Individual &indiv, in
     double result = 0.;
     int maxSize = std::min<int>(nbClosest, indiv.indivsPerProximity.size());
     auto it = indiv.indivsPerProximity.begin();
+    // bookmark
     for (int i = 0; i < maxSize; i++)
     {
         result += it->first;
@@ -1796,6 +1856,7 @@ double Population::getDiversity(const SubPopulation &pop)
 {
     double average = 0.;
     int size = std::min<int>(params.ap.mu, pop.size()); // Only monitoring the "mu" better solutions to avoid too much noise in the measurements
+    // bookmark
     for (int i = 0; i < size; i++)
         average += averageBrokenPairsDistanceClosest(*pop[i], size);
     if (size > 0)
@@ -1808,6 +1869,7 @@ double Population::getAverageCost(const SubPopulation &pop)
 {
     double average = 0.;
     int size = std::min<int>(params.ap.mu, pop.size()); // Only monitoring the "mu" better solutions to avoid too much noise in the measurements
+    // bookmark
     for (int i = 0; i < size; i++)
         average += pop[i]->eval.penalizedCost;
     if (size > 0)
@@ -1852,6 +1914,7 @@ Population::Population(Params &params, Split &split, LocalSearch &localSearch) :
 
 Population::~Population()
 {
+    // bookmark
     for (int i = 0; i < (int)feasibleSubpop.size(); i++)
         delete feasibleSubpop[i];
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
@@ -1867,6 +1930,7 @@ void Split::generalSplit(Individual &indiv, int nbMaxVehicles)
 
     // Initialization of the data structures for the linear split algorithms
     // Direct application of the code located at https://github.com/vidalt/Split-Library
+    // bookmarkimp
     for (int i = 1; i <= params.nbClients; i++)
     {
         cliSplit[i].demand = params.cli[indiv.chromT[i - 1]].demand;
@@ -1894,6 +1958,7 @@ int Split::splitSimple(Individual &indiv)
 {
     // Reinitialize the potential structures
     potential[0][0] = 0;
+    // bookmarkpartiallyimp
     for (int i = 1; i <= params.nbClients; i++)
         potential[0][i] = 1.e30;
 
@@ -1906,6 +1971,7 @@ int Split::splitSimple(Individual &indiv)
             double load = 0.;
             double distance = 0.;
             double serviceDuration = 0.;
+            // bookmarkreduction
             for (int j = i + 1; j <= params.nbClients && load <= 1.5 * params.vehicleCapacity; j++)
             {
                 load += cliSplit[j].demand;
@@ -1953,6 +2019,7 @@ int Split::splitSimple(Individual &indiv)
         throw std::string("ERROR : no Split solution has been propagated until the last node");
 
     // Filling the chromR structure
+    // bookmark
     for (int k = params.nbVehicles - 1; k >= maxVehicles; k--)
         indiv.chromR[k].clear();
 
@@ -1975,6 +2042,7 @@ int Split::splitLF(Individual &indiv)
 {
     // Initialize the potential structures
     potential[0][0] = 0;
+    // bookmark
     for (int k = 0; k <= maxVehicles; k++)
         for (int i = 1; i <= params.nbClients; i++)
             potential[k][i] = 1.e30;
@@ -2057,6 +2125,7 @@ int Split::splitLF(Individual &indiv)
         }
 
     // Filling the chromR structure
+    // bookmark
     for (int k = params.nbVehicles - 1; k >= nbRoutes; k--)
         indiv.chromR[k].clear();
 
