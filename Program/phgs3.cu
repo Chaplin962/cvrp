@@ -1731,6 +1731,16 @@ void Population::managePenalties()
 
     // Update the evaluations
     // bookmarkimp
+    int infeasible_subpopsize=(int) infeasibleSubpop.size();
+    double *infeasiblesubpop_evalpenalcost, *infeasiblesubpop_evaldist, *infeasiblesubpop_evalcapexcess, *infeasiblesubpop_evaldurexcess = (double*)malloc(sizeof(double)*infeasible_subpopsize);
+    int params_penaltyCapacity = params.penaltyCapacity;
+    int params_penaltyDuration = params.penaltyDuration;
+
+    cudaMalloc((void **)&infeasiblesubpop_evalpenalcost, infeasible_subpopsize*sizeof(int));
+    cudaMalloc((void **)&infeasiblesubpop_evaldist, infeasible_subpopsize*sizeof(int));
+    cudaMalloc((void **)&infeasiblesubpop_evalcapexcess, infeasible_subpopsize*sizeof(int));
+    cudaMalloc((void **)&infeasiblesubpop_evaldurexcess, infeasible_subpopsize*sizeof(int));
+
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
         infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
 
