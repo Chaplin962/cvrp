@@ -1594,16 +1594,18 @@ bool Population::addIndividual(const Individual &indiv, bool updateFeasible)
         return false;
 }
 
-__global__ void updateBiasedFitnesses_kernel(int pop_size,double ranking,int params_ap_nbElite,double pop_ranking_second_biasedFitness)
+__global__ void updateBiasedFitnesses_kernel(int pop_size,int* ranking_second,int params_ap_nbElite,double* pop_ranking_second_biasedFitness)
 {
-    if(tid < (int)pop.size())
+    int tid=threadIdx.x;
+
+    if(tid < (int)pop_size())
     {
-        double divRank = (double)tid / (double)(pop.size() - 1); // Ranking from 0 to 1
-        double fitRank = (double)ranking[tid].second / (double)(pop.size() - 1);
-        if ((int)pop.size() <= params.ap.nbElite) // Elite individuals cannot be smaller than population size
-            pop[ranking[i].second]->biasedFitness = fitRank;
+        double divRank = (double)tid / (double)(pop_size() - 1); // Ranking from 0 to 1
+        double fitRank = (double)ranking_second[tid]/ (double)(pop_size() - 1);
+        if ((int)pop_size <= params_ap_nbElite) // Elite individuals cannot be smaller than population size
+            pop_ranking_second_biasedFitness[tid] = fitRank;
         else
-            pop[ranking[i].second]->biasedFitness = fitRank + (1.0 - (double)params.ap.nbElite / (double)pop.size()) * divRank;
+            pop_ranking_second_biasedFitness[tid] = fitRank + (1.0 - (double)params_ap_nbElite / (double)pop_size) * divRank;
     }
 }
 
@@ -1622,15 +1624,27 @@ void Population::updateBiasedFitnesses(SubPopulation &pop)
     {
         //bookmark
         int pop_size=(int)pop.size();
-        double ranking;
-        int params_ap_nbElite;
-        double pop_ranking_second_biasedFitness;
+        int params_ap_nbElite=params.ap.nbElite;
+        int *ranking_second[pop_size],ranking_second2[pop_size];
+        double *pop_ranking_second_biasedFitness[pop_size],pop_ranking_second_biasedFitness2[pop_size];
 
-        
+        for(int i=0;i<pop_size;i++){
+            ranking_second2[i]=ranking[i].second;
+        }
 
+        cudaMalloc((void **)&ranking_second, pop_size * sizeof(int));
+        cudaMalloc((void **)&pop_ranking_second_biasedFitness, pop_size * sizeof(int));
 
-        updateBiasedFitnesses_kernel<<<BLOCKS, NUM_THREADS>>>(pop_size,ranking,params_ap_nbElite,pop_ranking_second_biasedFitness);
-        
+        cudaMemcpy(ranking_second, ranking_second2, pop_size * sizeof(int), cudaMemcpyHostToDevice);
+
+        updateBiasedFitnesses_kernel<<<BLOCKS, NUM_THREADS>>>(pop_size,ranking_second,params_ap_nbElite,pop_ranking_second_biasedFitness);
+
+        cudaMemcpy(pop_ranking_second_biasedFitness2, pop_ranking_second_biasedFitness, pop_size * sizeof(int), cudaMemcpyDeviceToHost);
+
+        for(int i=0;i<pop_size;i++){
+            pop[ranking[i].second]->biasedFitness = pop_ranking_second_biasedFitness2[i];
+        }
+
         /*
         for (int i = 0; i < (int)pop.size(); i++)
         {
