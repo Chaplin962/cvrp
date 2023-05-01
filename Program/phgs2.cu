@@ -88,7 +88,7 @@ Solution *prepare_solution(Population &population, Params &params)
         // filling out the route information
         sol->n_routes = n_routes;
         sol->routes = new SolutionRoute[n_routes];
-        // bookmarkimp
+        // bookmark
         for (int k = 0; k < n_routes; k++)
         {
             sol->routes[k].length = (int)best->chromR[k].size();
@@ -373,7 +373,7 @@ Genetic::Genetic(Params &params) : params(params),
 void Individual::evaluateCompleteCost(const Params &params)
 {
     eval = EvalIndiv();
-    // bookmarkimpbut has paramas.timeCost
+    // bookmarkimp but has paramas.timeCost
     for (int r = 0; r < params.nbVehicles; r++)
     {
         if (!chromR[r].empty())
@@ -1921,7 +1921,7 @@ void Split::generalSplit(Individual &indiv, int nbMaxVehicles)
 
     // Initialization of the data structures for the linear split algorithms
     // Direct application of the code located at https://github.com/vidalt/Split-Library
-    // bookmarkimp
+    // bookmarkimp but has params.timeCost
     for (int i = 1; i <= params.nbClients; i++)
     {
         cliSplit[i].demand = params.cli[indiv.chromT[i - 1]].demand;
