@@ -63,7 +63,7 @@ void print_algorithm_parameters(const AlgorithmParameters &ap)
 #include <iostream>
 #include <vector>
 #include <cmath>
-// bookmark
+
 Solution *prepare_solution(Population &population, Params &params)
 {
     // Preparing the best solution
@@ -80,6 +80,7 @@ Solution *prepare_solution(Population &population, Params &params)
 
         // finding out the number of routes in the best individual
         int n_routes = 0;
+        // bookmarkreduction
         for (int k = 0; k < params.nbVehicles; k++)
             if (!best->chromR[k].empty())
                 ++n_routes;
@@ -87,6 +88,7 @@ Solution *prepare_solution(Population &population, Params &params)
         // filling out the route information
         sol->n_routes = n_routes;
         sol->routes = new SolutionRoute[n_routes];
+        // bookmarkimp
         for (int k = 0; k < n_routes; k++)
         {
             sol->routes[k].length = (int)best->chromR[k].size();
@@ -118,7 +120,7 @@ extern "C" Solution *solve_cvrp(
         std::vector<double> demands(dem, dem + n);
 
         std::vector<std::vector<double>> distance_matrix(n, std::vector<double>(n));
-        // bookmark
+        // bookmarkimp
         for (int i = 0; i < n; i++)
         {
             for (int j = 0; j < n; j++)
@@ -170,7 +172,6 @@ extern "C" Solution *solve_cvrp_dist_mtx(
         std::vector<double> demands(dem, dem + n);
 
         std::vector<std::vector<double>> distance_matrix(n, std::vector<double>(n));
-        // bookmark
         for (int i = 0; i < n; i++)
         { // row
             for (int j = 0; j < n; j++)
@@ -372,7 +373,7 @@ Genetic::Genetic(Params &params) : params(params),
 void Individual::evaluateCompleteCost(const Params &params)
 {
     eval = EvalIndiv();
-    // bookmark
+    // bookmarkimpbut has paramas.timeCost
     for (int r = 0; r < params.nbVehicles; r++)
     {
         if (!chromR[r].empty())
@@ -1622,7 +1623,7 @@ void Population::updateBiasedFitnesses(SubPopulation &pop)
         pop[0]->biasedFitness = 0;
     else
     {
-        // bookmark
+        // bookmarkimp
         int pop_size = (int)pop.size();
         int params_ap_nbElite = params.ap.nbElite;
         int *ranking_second, *ranking_second2=(int *)malloc(sizeof(int) * pop_size);
@@ -1729,12 +1730,12 @@ void Population::managePenalties()
         params.penaltyDuration = std::max<double>(params.penaltyDuration * params.ap.penaltyDecrease, 0.1);
 
     // Update the evaluations
-    // bookmark
+    // bookmarkimp
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
         infeasibleSubpop[i]->eval.penalizedCost = infeasibleSubpop[i]->eval.distance + params.penaltyCapacity * infeasibleSubpop[i]->eval.capacityExcess + params.penaltyDuration * infeasibleSubpop[i]->eval.durationExcess;
 
     // If needed, reorder the individuals in the infeasible subpopulation since the penalty values have changed (simple bubble sort for the sake of simplicity)
-    // bookmark
+    // bookmarkimp
     for (int i = 0; i < (int)infeasibleSubpop.size(); i++)
     {
         for (int j = 0; j < (int)infeasibleSubpop.size() - i - 1; j++)
@@ -1920,7 +1921,7 @@ void Split::generalSplit(Individual &indiv, int nbMaxVehicles)
 
     // Initialization of the data structures for the linear split algorithms
     // Direct application of the code located at https://github.com/vidalt/Split-Library
-    // bookmark
+    // bookmarkimp
     for (int i = 1; i <= params.nbClients; i++)
     {
         cliSplit[i].demand = params.cli[indiv.chromT[i - 1]].demand;
@@ -1948,7 +1949,7 @@ int Split::splitSimple(Individual &indiv)
 {
     // Reinitialize the potential structures
     potential[0][0] = 0;
-    // bookmark
+    // bookmarkpartiallyimp
     for (int i = 1; i <= params.nbClients; i++)
         potential[0][i] = 1.e30;
 
