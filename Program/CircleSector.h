@@ -3,7 +3,7 @@
 
 // Simple data structure to represent circle sectors
 // Angles are measured in [0,65535] instead of [0,359], in such a way that modulo operations are much faster (since 2^16 = 65536)
-// Credit to Fabian Giesen at "https://web.archive.org/web/20200912191950/https://fgiesen.wordpress.com/2015/09/24/intervals-in-modular-arithmetic/" for useful implementation tips regarding interval overlaps in modular arithmetics 
+// Credit to Fabian Giesen at "https://web.archive.org/web/20200912191950/https://fgiesen.wordpress.com/2015/09/24/intervals-in-modular-arithmetic/" for useful implementation tips regarding interval overlaps in modular arithmetics
 struct CircleSector
 {
 	int start;
@@ -18,7 +18,7 @@ struct CircleSector
 	}
 
 	// Initialize a circle sector from a single point
-	__host__ __device__ void initialize(int point)
+	void initialize(int point)
 	{
 		start = point;
 		end = point;
@@ -31,15 +31,14 @@ struct CircleSector
 	}
 
 	// Tests overlap of two circle sectors
-	static bool overlap(const CircleSector & sector1, const CircleSector & sector2)
+	static bool overlap(const CircleSector &sector1, const CircleSector &sector2)
 	{
-		return ((positive_mod(sector2.start - sector1.start) <= positive_mod(sector1.end - sector1.start))
-			|| (positive_mod(sector1.start - sector2.start) <= positive_mod(sector2.end - sector2.start)));
+		return ((positive_mod(sector2.start - sector1.start) <= positive_mod(sector1.end - sector1.start)) || (positive_mod(sector1.start - sector2.start) <= positive_mod(sector2.end - sector2.start)));
 	}
 
-	// Extends the circle sector to include an additional point 
+	// Extends the circle sector to include an additional point
 	// Done in a "greedy" way, such that the resulting circle sector is the smallest
-	__host__ __device__ void extend(int point)
+	void extend(int point)
 	{
 		if (!isEnclosed(point))
 		{
