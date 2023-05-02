@@ -1855,33 +1855,31 @@ struct Client
 };*/
 
 //[edit] parallelizing while loop
-__global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynode, int myplace, double myload, double mytime, double myReversalDistance, double cumulatedX, double cumulatedY, bool firstIt, double *params_cli[], double *params_timeCost[], double *parallel_coordX[], double *parallel_coordY[], int *parallel_polarAngle[])
+__global__ void updateRouteData_kernel(struct Route *myRoute, struct Node *mynode, int myplace, double myload, double mytime, double myReversalDistance, double cumulatedX, double cumulatedY, bool firstIt, Params *params)
 {
 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    while (!mynode->isDepot || firstIt && tid < BLOCKS * NUM_THREADS)
+    while (!mynode->isDepot || firstIt)
     {
         mynode = mynode->next;
         myplace++;
         mynode->position = myplace;
-        myload += (*params_cli)[mynode->cour];
-        mytime += params_timeCost[mynode->prev->cour][mynode->cour] + (*params_cli)[mynode->cour];
-        myReversalDistance += params_timeCost[mynode->cour][mynode->prev->cour] - params_timeCost[mynode->prev->cour][mynode->cour];
+        myload += params->cli[mynode->cour].demand;
+        mytime += params->timeCost[mynode->prev->cour][mynode->cour] + params->cli[mynode->cour].serviceDuration;
+        myReversalDistance += params->timeCost[mynode->cour][mynode->prev->cour] - params->timeCost[mynode->prev->cour][mynode->cour];
         mynode->cumulatedLoad = myload;
         mynode->cumulatedTime = mytime;
         mynode->cumulatedReversalDistance = myReversalDistance;
-
         if (!mynode->isDepot)
         {
-            cumulatedX += (*parallel_coordX)[mynode->cour];
-            cumulatedY += (*parallel_coordY)[mynode->cour];
+            cumulatedX += params->cli[mynode->cour].coordX;
+            cumulatedY += params->cli[mynode->cour].coordY;
             if (firstIt)
-                myRoute->sector.initialize(*parallel_polarAngle[mynode->cour]);
+                myRoute->sector.initialize(params->cli[mynode->cour].polarAngle);
             else
-                myRoute->sector.extend((*parallel_polarAngle)[mynode->cour]);
+                myRoute->sector.extend(params->cli[mynode->cour].polarAngle);
         }
-
         firstIt = false;
     }
 }
@@ -1922,88 +1920,46 @@ void LocalSearch::updateRouteData(Route *myRoute)
         count++;
     }
 
-    double *coordX[count], *coordY[count];
-    int *polarAngle[count], *parallel_polarAngle[count];
-    double *parallel_coordX[count], *parallel_coordY[count];
-    double *params_cli[count];
-    double *params_timeCost[count];
-
-    double *params_cli2[count];
-    double *params_timeCost2[count];
-
-    mynode = mynode2;
-
-    while (!mynode->isDepot || firstIt)
-    {
-        mynode = mynode->next;
-        *params_cli2[mynode->cour] = (params.cli[mynode->cour].demand);
-        *params_timeCost2[mynode->cour] = (params.timeCost[mynode->prev->cour][mynode->cour]);
-        *coordX[mynode->cour] = (params.cli[mynode->cour].coordX);
-        *coordY[mynode->cour] = (params.cli[mynode->cour].coordY);
-        *polarAngle[mynode->cour] = (params.cli[mynode->cour].polarAngle);
-    }
+    Params *parallel_params;
 
     cudaMalloc((void **)&parallel_myRoute, sizeof(Route));
     cudaMalloc((void **)&parallel_mynode, sizeof(Route));
-    cudaMalloc((void **)&params_cli, count * sizeof(Client));
-    cudaMalloc((void **)&params_timeCost, count * sizeof(double));
-    cudaMalloc((void **)&parallel_coordX, count * sizeof(double));
-    cudaMalloc((void **)&parallel_coordY, count * sizeof(double));
-    cudaMalloc((void **)&parallel_polarAngle, count * sizeof(int));
+    cudaMalloc((void **)&parallel_params, sizeof(Params));
 
-    cudaMemcpy(parallel_myRoute, myRoute, sizeof(Route), cudaMemcpyHostToDevice);
-    cudaMemcpy(parallel_mynode, mynode, sizeof(Route), cudaMemcpyHostToDevice);
-    cudaMemcpy(params_cli, params_cli2, count * sizeof(Client), cudaMemcpyHostToDevice);
-    cudaMemcpy(params_timeCost, params_timeCost2, count * sizeof(double), cudaMemcpyHostToDevice);
-    cudaMemcpy(parallel_coordX, coordX, count * sizeof(double), cudaMemcpyHostToDevice);
-    cudaMemcpy(parallel_coordX, coordY, count * sizeof(double), cudaMemcpyHostToDevice);
-    cudaMemcpy(parallel_polarAngle, polarAngle, count * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(parallel_myRoute, myRoute, sizeof(myRoute), cudaMemcpyHostToDevice);
+    cudaMemcpy(parallel_mynode, mynode, sizeof(mynode), cudaMemcpyHostToDevice);
+    cudaMemcpy(parallel_params, &params, sizeof(params), cudaMemcpyHostToDevice);
 
-    updateRouteData_kernel<<<BLOCKS, NUM_THREADS>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, params_cli, params_timeCost, parallel_coordX, parallel_coordY, parallel_polarAngle);
+    updateRouteData_kernel<<<count / 100, 100>>>(parallel_myRoute, parallel_mynode, myplace, myload, mytime, myReversalDistance, cumulatedX, cumulatedY, firstIt, parallel_params);
 
-    cudaMemcpy(parallel_myRoute, myRoute, sizeof(Route), cudaMemcpyDeviceToHost);
-    cudaMemcpy(parallel_mynode, mynode, sizeof(Route), cudaMemcpyDeviceToHost);
-    cudaMemcpy(params_cli, params_cli2, count * sizeof(Client), cudaMemcpyDeviceToHost);
-    cudaMemcpy(params_timeCost, params_timeCost2, count * sizeof(double), cudaMemcpyDeviceToHost);
-    cudaMemcpy(parallel_coordX, coordX, count * sizeof(double), cudaMemcpyDeviceToHost);
-    cudaMemcpy(parallel_coordX, coordY, count * sizeof(double), cudaMemcpyDeviceToHost);
-    cudaMemcpy(parallel_polarAngle, polarAngle, count * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parallel_myRoute, myRoute, sizeof(myRoute), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parallel_mynode, mynode, sizeof(mynode), cudaMemcpyDeviceToHost);
+    cudaMemcpy(parallel_params, &params, sizeof(params), cudaMemcpyDeviceToHost);
 
     mynode = mynode2;
 
-    while (!mynode->isDepot || firstIt)
-    {
-        mynode = mynode->next;
-
-        (params.cli[mynode->cour].coordX) = *coordX[mynode->cour];
-        (params.cli[mynode->cour].coordY) = *coordY[mynode->cour];
-        (params.cli[mynode->cour].polarAngle) = *polarAngle[mynode->cour];
-    }
-
-    /*
-        while (!mynode->isDepot || firstIt)
-        {
-            mynode = mynode->next;
-            myplace++;
-            mynode->position = myplace;
-            myload += params.cli[mynode->cour].demand;
-            mytime += params.timeCost[mynode->prev->cour][mynode->cour] + params.cli[mynode->cour].serviceDuration;
-            myReversalDistance += params.timeCost[mynode->cour][mynode->prev->cour] - params.timeCost[mynode->prev->cour][mynode->cour];
-            mynode->cumulatedLoad = myload;
-            mynode->cumulatedTime = mytime;
-            mynode->cumulatedReversalDistance = myReversalDistance;
-            if (!mynode->isDepot)
-            {
-                cumulatedX += params.cli[mynode->cour].coordX;
-                cumulatedY += params.cli[mynode->cour].coordY;
-                if (firstIt)
-                    myRoute->sector.initialize(params.cli[mynode->cour].polarAngle);
-                else
-                    myRoute->sector.extend(params.cli[mynode->cour].polarAngle);
-            }
-            firstIt = false;
-        }
-    */
+    // while (!mynode->isDepot || firstIt)
+    // {
+    //     mynode = mynode->next;
+    //     myplace++;
+    //     mynode->position = myplace;
+    //     myload += params.cli[mynode->cour].demand;
+    //     mytime += params.timeCost[mynode->prev->cour][mynode->cour] + params.cli[mynode->cour].serviceDuration;
+    //     myReversalDistance += params.timeCost[mynode->cour][mynode->prev->cour] - params.timeCost[mynode->prev->cour][mynode->cour];
+    //     mynode->cumulatedLoad = myload;
+    //     mynode->cumulatedTime = mytime;
+    //     mynode->cumulatedReversalDistance = myReversalDistance;
+    //     if (!mynode->isDepot)
+    //     {
+    //         cumulatedX += params.cli[mynode->cour].coordX;
+    //         cumulatedY += params.cli[mynode->cour].coordY;
+    //         if (firstIt)
+    //             myRoute->sector.initialize(params.cli[mynode->cour].polarAngle);
+    //         else
+    //             myRoute->sector.extend(params.cli[mynode->cour].polarAngle);
+    //     }
+    //     firstIt = false;
+    // }
 
     myRoute->duration = mytime;
     myRoute->load = myload;
