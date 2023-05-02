@@ -1,5 +1,9 @@
 #include "AlgorithmParameters.h"
 #include <iostream>
+#include "LocalSearch.h"
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <curand_kernel.h>
 #define NUM_THREADS 1024
 #define BLOCKS 1024
 
@@ -673,11 +677,6 @@ InstanceCVRPLIB::InstanceCVRPLIB(std::string pathToInstance, bool isRoundingInte
     else
         throw std::string("Impossible to open instance file: " + pathToInstance);
 }
-
-#include "LocalSearch.h"
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <curand_kernel.h>
 
 void LocalSearch::run(Individual &indiv, double penaltyCapacityLS, double penaltyDurationLS)
 {
